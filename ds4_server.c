@@ -9262,6 +9262,123 @@ static int kv_cache_find_text_prefix(kv_disk_cache *kc, const char *prompt_text,
     return best;
 }
 
+#ifdef DS4_WOMBATKV
+/* Hook B foyer-direct: probe WombatKV, on hit load straight into the
+ * ds4 session from an in-memory FILE* (fmemopen) instead of round-
+ * tripping through `--kv-disk-dir`. Saves ~30-50 ms of disk write +
+ * read at this prompt size and removes the local-disk dependency for
+ * the warm path entirely.
+ *
+ * Returns the token count on success, 0 on miss/error. Mirrors the
+ * disk-path body of kv_cache_try_load_text. */
+static int wkv_try_load_direct(server *s, const char *prompt_text,
+                                size_t prompt_bytes, int quant_bits,
+                                ds4_tokens *effective_prompt,
+                                char **loaded_path_out) {
+    if (!g_wkv_handle) return 0;
+    char prompt_sha[41];
+    sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wkv_fingerprint, prompt_sha, quant_bits);
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wkv_borrow_t *borrow = NULL;
+    int32_t rc = wkv_get_kv_borrowed(g_wkv_handle, g_wkv_namespace,
+                                      wkey, &bp, &bn, &borrow);
+    if (rc != 1 || !bp || bn == 0) {
+        if (borrow) wkv_release_borrow(borrow);
+        return 0;
+    }
+    const double load_t0 = now_sec();
+    FILE *fp = fmemopen((void *)bp, bn, "rb");
+    if (!fp) {
+        wkv_release_borrow(borrow);
+        return 0;
+    }
+    uint32_t text_bytes = 0;
+    kv_entry hdr = {0};
+    int loaded = 0;
+    char *cached_text = NULL;
+    char err[160] = {0};
+    const char *fail_reason = "invalid header";
+    bool header_ok = kv_read_header(fp, &hdr, &text_bytes);
+    if (header_ok) {
+        if ((uint64_t)text_bytes > prompt_bytes) {
+            header_ok = false;
+            fail_reason = "cached text longer than prompt";
+        } else {
+            cached_text = xmalloc((size_t)text_bytes + 1);
+            if (fread(cached_text, 1, text_bytes, fp) != text_bytes) {
+                header_ok = false;
+                fail_reason = "truncated cached text";
+            } else {
+                cached_text[text_bytes] = '\0';
+                char text_sha[41];
+                sha1_bytes_hex(cached_text, text_bytes, text_sha);
+                if (strcmp(text_sha, prompt_sha)) {
+                    header_ok = false;
+                    fail_reason = "cached text hash mismatch";
+                } else if (!byte_prefix_match(prompt_text, prompt_bytes,
+                                              cached_text, text_bytes)) {
+                    header_ok = false;
+                    fail_reason = "cached text prefix mismatch";
+                }
+            }
+        }
+    }
+    if (header_ok &&
+        ds4_session_load_payload(s->session, fp, hdr.payload_bytes,
+                                 err, sizeof(err)) == 0) {
+        const ds4_tokens *loaded_tokens = ds4_session_tokens(s->session);
+        if (loaded_tokens && loaded_tokens->len == (int)hdr.tokens) {
+            loaded = (int)hdr.tokens;
+            if (effective_prompt) {
+                build_prompt_from_exact_prefix_and_text_suffix(
+                    s->engine, loaded_tokens, prompt_text + text_bytes,
+                    effective_prompt);
+            }
+            if (hdr.ext_flags & KV_EXT_TOOL_MAP) {
+                kv_tool_map_load_from_pos(s, fp, NULL);
+            }
+        } else {
+            ds4_session_invalidate(s->session);
+            fprintf(stderr,
+                    "ds4-server: wkv direct-load discarded corrupt payload "
+                    "sha=%s expected_tokens=%d got=%d\n",
+                    prompt_sha, (int)hdr.tokens,
+                    loaded_tokens ? loaded_tokens->len : -1);
+        }
+    } else if (!header_ok) {
+        fprintf(stderr,
+                "ds4-server: wkv direct-load rejected sha=%s: %s\n",
+                prompt_sha, fail_reason);
+    } else {
+        ds4_session_invalidate(s->session);
+        fprintf(stderr,
+                "ds4-server: wkv direct-load payload error sha=%s: %s\n",
+                prompt_sha, err);
+    }
+    fclose(fp);
+    wkv_release_borrow(borrow);
+    free(cached_text);
+    if (loaded > 0) {
+        const double load_ms = (now_sec() - load_t0) * 1000.0;
+        fprintf(stderr,
+                "ds4-server: wkv direct-load hit tokens=%d text=%u quant=%u "
+                "load=%.1f ms sha=%s (no disk round-trip)\n",
+                loaded, text_bytes, hdr.quant_bits, load_ms, prompt_sha);
+        if (loaded_path_out) {
+            char hint[64];
+            snprintf(hint, sizeof(hint), "wkv-direct:%s", prompt_sha);
+            *loaded_path_out = xstrdup(hint);
+        }
+    }
+    return loaded;
+}
+#endif /* DS4_WOMBATKV */
+
 static int kv_cache_try_load_text(server *s, const char *prompt_text,
                                   ds4_tokens *effective_prompt,
                                   char **loaded_path_out,
@@ -9278,10 +9395,39 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     int idx = kv_cache_find_text_prefix(kc, prompt_text, quant_bits,
                                         ds4_session_ctx(s->session));
 #ifdef DS4_WOMBATKV
-    /* Hook B — RFC 0005 §3.1: on local-cache miss, probe WombatKV. On
-     * hit we materialise the .kv into --kv-disk-dir and re-run the
-     * local lookup so the existing load path stays unchanged. */
+    /* Hook B — RFC 0005 §3.1: on local-cache miss, probe WombatKV.
+     *
+     * Two paths:
+     *   1. Foyer-direct: fmemopen the borrowed bytes from WombatKV
+     *      and load straight into the session — no disk round-trip
+     *      at all. This is the path foyer-RAM hits inside the same
+     *      ds4 process want (sub-µs lookup) and what beats the
+     *      ds4-native disk-text load.
+     *   2. Materialise fallback: write the bytes into --kv-disk-dir
+     *      and re-run the local search. Used when the direct load
+     *      path rejected the bytes (header mismatch, etc.) so the
+     *      operator can still inspect / recover.
+     *
+     * Switch via DS4_WOMBATKV_DIRECT=1 (default OFF). The direct
+     * path is correctness-suspect on macOS today: fmemopen-backed
+     * fread into ds4_session_load_payload produces a session whose
+     * decode rate drops 4-5x vs the same payload loaded via fopen.
+     * Validation (saved_tokens, magic) passes but something subtle
+     * is corrupted. Suspected fmemopen quirk on macOS. Disabled by
+     * default until the load_payload reads-from-buffer path is
+     * audited or replaced. Materialise stays the production path. */
     if (idx < 0 && g_wkv_handle) {
+        const char *direct_env = getenv("DS4_WOMBATKV_DIRECT");
+        bool try_direct = direct_env && direct_env[0] == '1';
+        if (try_direct) {
+            int direct_loaded = wkv_try_load_direct(
+                s, prompt_text, prompt_bytes, quant_bits,
+                effective_prompt, loaded_path_out);
+            if (direct_loaded > 0) return direct_loaded;
+        }
+        /* Fall back to materialise — useful when caller wants the
+         * file on disk for inspection or when direct-load rejected
+         * the bytes (header mismatch, etc.). */
         char prompt_sha[41];
         sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
         char *probe_path = kv_path_for_sha(kc, prompt_sha);

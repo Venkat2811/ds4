@@ -40,6 +40,16 @@ static volatile sig_atomic_t g_listen_fd = -1;
 #define DS4_SERVER_IO_TIMEOUT_SEC 10
 #define DS4_SERVER_SEND_STALL_TIMEOUT_MS 2000
 
+#ifdef DS4_WOMBATKV
+/* Phase 2 in-tree WombatKV hooks. Gated by `-DDS4_WOMBATKV` at
+ * compile time and `DS4_WOMBATKV_ENABLE=1` at runtime so this is a
+ * pure no-op unless both gates are on. RFC 0005 §3.1. */
+#include "wombatkv.h"
+static wkv_handle_t *g_wkv_handle = NULL;
+static char *g_wkv_namespace = NULL;
+static char *g_wkv_fingerprint = NULL;
+#endif
+
 static void stop_signal_handler(int sig) {
     (void)sig;
     if (g_stop_requested) _exit(130);
@@ -80,6 +90,128 @@ static char *xstrdup(const char *s) {
     memcpy(p, s, n + 1);
     return p;
 }
+
+#ifdef DS4_WOMBATKV
+/* Forward decl — sha1_bytes_hex is defined later in the file. */
+static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
+
+/* Initialise the WombatKV handle from env (WKV_S3_*, WKV_*).
+ * Required runtime env: DS4_WOMBATKV_ENABLE=1 and
+ * DS4_WKV_FINGERPRINT24 (the 24-hex-char model fingerprint digest the
+ * adapter / sidecar / engine all agree on). Returns silently if either
+ * is unset — the hooks degrade to no-ops. */
+static void wkv_init_hooks(void) {
+    if (!getenv("DS4_WOMBATKV_ENABLE")) return;
+    const char *fp = getenv("DS4_WKV_FINGERPRINT24");
+    if (!fp || strlen(fp) < 24) {
+        fprintf(stderr,
+                "ds4-server: DS4_WOMBATKV_ENABLE set but "
+                "DS4_WKV_FINGERPRINT24 is missing/short; wkv disabled\n");
+        return;
+    }
+    g_wkv_handle = wkv_init_from_env();
+    if (!g_wkv_handle) {
+        const char *err = wkv_last_error();
+        fprintf(stderr, "ds4-server: wkv_init_from_env failed: %s\n",
+                err ? err : "(unknown)");
+        return;
+    }
+    const char *ns = getenv("WKV_NAMESPACE");
+    g_wkv_namespace = xstrdup(ns ? ns : "ds4-metal");
+    g_wkv_fingerprint = xstrdup(fp);
+    fprintf(stderr,
+            "ds4-server: wkv hooks enabled namespace=%s fingerprint=%s\n",
+            g_wkv_namespace, g_wkv_fingerprint);
+}
+
+static void wkv_shutdown_hooks(void) {
+    if (g_wkv_handle) {
+        wkv_free(g_wkv_handle);
+        g_wkv_handle = NULL;
+    }
+    free(g_wkv_namespace);
+    g_wkv_namespace = NULL;
+    free(g_wkv_fingerprint);
+    g_wkv_fingerprint = NULL;
+}
+
+/* Read the freshly-written .kv file and PUT it into the WombatKV
+ * namespace under the canonical key. Errors are logged but never
+ * propagate — the local save already succeeded, the cache is correct
+ * either way. */
+static void wkv_shadow_kv_file(const char *path, const char *sha,
+                                int quant_bits, const char *reason) {
+    if (!g_wkv_handle || !sha || !path) return;
+    FILE *rf = fopen(path, "rb");
+    if (!rf) return;
+    if (fseek(rf, 0, SEEK_END) != 0) { fclose(rf); return; }
+    long sz = ftell(rf);
+    if (sz < 0) { fclose(rf); return; }
+    if (fseek(rf, 0, SEEK_SET) != 0) { fclose(rf); return; }
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(rf); return; }
+    size_t got = fread(buf, 1, (size_t)sz, rf);
+    fclose(rf);
+    if (got != (size_t)sz) { free(buf); return; }
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wkv_fingerprint, sha, quant_bits);
+    int64_t rc = wkv_put_kv(g_wkv_handle, g_wkv_namespace, wkey,
+                             buf, (size_t)sz);
+    if (rc < 0) {
+        const char *err = wkv_last_error();
+        fprintf(stderr, "ds4-server: wkv shadow failed (%s): %s\n",
+                reason, err ? err : "(unknown)");
+    } else {
+        fprintf(stderr,
+                "ds4-server: wkv shadowed key=%s reason=%s size=%ld\n",
+                wkey, reason, sz);
+    }
+    free(buf);
+}
+
+/* Probe WombatKV for the prompt's SHA1; on hit, write the bytes to the
+ * local --kv-disk-dir/<sha>.kv path. Returns 1 if a file was
+ * materialised, 0 otherwise. The caller must then refresh its kv-disk-
+ * dir scan and retry the local lookup. */
+static int wkv_probe_and_materialise(const char *prompt_text, size_t prompt_bytes,
+                                      int quant_bits, const char *target_path) {
+    if (!g_wkv_handle || !prompt_text || !target_path) return 0;
+    char prompt_sha[41];
+    sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wkv_fingerprint, prompt_sha, quant_bits);
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wkv_borrow_t *borrow = NULL;
+    int32_t rc = wkv_get_kv_borrowed(g_wkv_handle, g_wkv_namespace,
+                                      wkey, &bp, &bn, &borrow);
+    if (rc != 1 || !bp || bn == 0) {
+        if (borrow) wkv_release_borrow(borrow);
+        return 0;
+    }
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", target_path, (long)getpid());
+    FILE *wf = fopen(tmp, "wb");
+    int ok = 0;
+    if (wf) {
+        ok = (fwrite(bp, 1, bn, wf) == bn) && (fflush(wf) == 0);
+        if (fclose(wf) != 0) ok = 0;
+        if (ok && rename(tmp, target_path) != 0) ok = 0;
+        if (!ok) unlink(tmp);
+    }
+    wkv_release_borrow(borrow);
+    if (ok) {
+        fprintf(stderr,
+                "ds4-server: wkv prefetched sha=%s size=%zu\n",
+                prompt_sha, bn);
+    }
+    return ok;
+}
+#endif /* DS4_WOMBATKV */
 
 static bool random_bytes(void *dst, size_t len) {
     unsigned char *p = dst;
@@ -9028,6 +9160,12 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
                    (double)(KV_CACHE_FIXED_HEADER + 4ull + text_len + payload_bytes + tool_map_bytes) / (1024.0 * 1024.0),
                    save_ms);
         kv_cache_evict(kc, live_tokens);
+#ifdef DS4_WOMBATKV
+        /* Hook A — RFC 0005 §3.1: shadow the just-written .kv into the
+         * WombatKV namespace so peer engines / restarts can recover it
+         * from foyer/S3 without touching the local disk cache. */
+        wkv_shadow_kv_file(path, sha, quant_bits, reason);
+#endif
     }
     free(tmp);
     free(text);
@@ -9139,6 +9277,25 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const size_t prompt_bytes = strlen(prompt_text);
     int idx = kv_cache_find_text_prefix(kc, prompt_text, quant_bits,
                                         ds4_session_ctx(s->session));
+#ifdef DS4_WOMBATKV
+    /* Hook B — RFC 0005 §3.1: on local-cache miss, probe WombatKV. On
+     * hit we materialise the .kv into --kv-disk-dir and re-run the
+     * local lookup so the existing load path stays unchanged. */
+    if (idx < 0 && g_wkv_handle) {
+        char prompt_sha[41];
+        sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+        char *probe_path = kv_path_for_sha(kc, prompt_sha);
+        if (probe_path) {
+            if (wkv_probe_and_materialise(prompt_text, prompt_bytes,
+                                           quant_bits, probe_path)) {
+                kv_cache_refresh(kc);
+                idx = kv_cache_find_text_prefix(kc, prompt_text, quant_bits,
+                                                ds4_session_ctx(s->session));
+            }
+            free(probe_path);
+        }
+    }
+#endif
     if (idx < 0) return 0;
 
     kv_entry e = kc->entry[idx];
@@ -11650,6 +11807,9 @@ int main(int argc, char **argv) {
     }
     g_listen_fd = lfd;
     server_log(DS4_LOG_DEFAULT, "ds4-server: listening on http://%s:%d", cfg.host, cfg.port);
+#ifdef DS4_WOMBATKV
+    wkv_init_hooks();
+#endif
 
     while (!g_stop_requested) {
         int fd = accept(lfd, NULL, NULL);
@@ -11705,6 +11865,9 @@ int main(int argc, char **argv) {
                    tokens->len);
         kv_cache_store_current(&s, "shutdown");
     }
+#ifdef DS4_WOMBATKV
+    wkv_shutdown_hooks();
+#endif
     server_close_resources(&s);
     return 0;
 }

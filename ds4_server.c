@@ -9704,20 +9704,62 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const size_t prompt_bytes = strlen(prompt_text);
 
 #ifdef DS4_WOMBATKV
-    /* Phase 3 Path X: WombatKV is authoritative. Walk its key list,
-     * find the longest text-prefix that matches `prompt_text`, and load
-     * straight from the borrowed bytes via fmemopen. No local search,
-     * no probe-and-materialise. */
+    /* Phase 3 Path X: WombatKV is authoritative. Two-tier lookup:
+     *   (1) Exact-prompt fast path: probe the deterministic key built
+     *       from sha1(prompt_text). One GET, no LIST. Object-storage-
+     *       native shape — the bucket layout is the index. This is the
+     *       common case for repeated chat turns / prefill warm hits.
+     *   (2) Prefix fallback: LIST + scan to find the longest cached
+     *       prefix shorter than the full prompt. Pays an S3 LIST round-
+     *       trip (~30 ms to local MinIO) but only on first-touch or
+     *       continued-conversation turns. */
     if (g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+        const double t_enter = now_sec();
+        /* (1) Exact-key probe. */
+        char prompt_sha[41];
+        sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+        const double t_pre_exact = now_sec();
+        int rc_exact = wmbt_kv_load_text_prefix_from_wombatkv(
+            s, prompt_text, prompt_bytes, (uint32_t)prompt_bytes, prompt_sha,
+            quant_bits, effective_prompt, loaded_path_out);
+        const double t_post_exact = now_sec();
+        const double exact_ms = (t_post_exact - t_pre_exact) * 1000.0;
+        if (rc_exact > 0) {
+            const double t_exit = now_sec();
+            fprintf(stderr,
+                    "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
+                    "\"path\":\"replace_local_exact\","
+                    "\"stages\":{\"entry_to_exit_ms\":%.2f,"
+                    "\"exact_probe_ms\":%.2f}}\n",
+                    (t_exit - t_enter) * 1000.0, exact_ms);
+            return rc_exact;
+        }
+        /* (2) Prefix scan fallback. */
         uint32_t hit_bytes = 0;
         char hit_sha[41] = {0};
+        const double t_pre_find = now_sec();
         int found = wmbt_kv_find_longest_text_prefix(prompt_text, prompt_bytes,
                                                   quant_bits, &hit_bytes,
                                                   hit_sha);
+        const double t_post_find = now_sec();
+        const double find_ms = (t_post_find - t_pre_find) * 1000.0;
+        fprintf(stderr,
+                "[MyelonInstr] {\"scope\":\"ds4_find\",\"path\":\"replace_local\","
+                "\"stages\":{\"exact_miss_ms\":%.2f,\"list_keys_find_ms\":%.2f,"
+                "\"prompt_bytes\":%zu,\"found\":%d,\"hit_bytes\":%u}}\n",
+                exact_ms, find_ms, prompt_bytes, found, hit_bytes);
         if (found > 0) {
-            return wmbt_kv_load_text_prefix_from_wombatkv(
+            int rc_load = wmbt_kv_load_text_prefix_from_wombatkv(
                 s, prompt_text, prompt_bytes, hit_bytes, hit_sha,
                 quant_bits, effective_prompt, loaded_path_out);
+            const double t_exit = now_sec();
+            fprintf(stderr,
+                    "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
+                    "\"path\":\"replace_local_prefix\","
+                    "\"stages\":{\"entry_to_exit_ms\":%.2f,"
+                    "\"exact_probe_ms\":%.2f,\"find_ms\":%.2f}}\n",
+                    (t_exit - t_enter) * 1000.0, exact_ms, find_ms);
+            return rc_load;
         }
         return 0;
     }

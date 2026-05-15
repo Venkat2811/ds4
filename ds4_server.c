@@ -9497,13 +9497,15 @@ static int wmbt_kv_load_text_prefix_from_wombatkv(
     const uint8_t *bp = NULL;
     size_t bn = 0;
     wmbt_kv_borrow_t *borrow = NULL;
+    const double t_pre_cabi = now_sec();
     int32_t rc = wmbt_kv_get_kv_borrowed(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
                                       &bp, &bn, &borrow);
+    const double t_post_cabi = now_sec();
     if (rc != 1 || !bp || bn == 0) {
         if (borrow) wmbt_kv_release_borrow(borrow);
         return 0;
     }
-    const double load_t0 = now_sec();
+    const double load_t0 = t_post_cabi;
     FILE *fp = fmemopen((void *)bp, bn, "rb");
     if (!fp) {
         wmbt_kv_release_borrow(borrow);
@@ -9514,7 +9516,9 @@ static int wmbt_kv_load_text_prefix_from_wombatkv(
     int loaded = 0;
     char err[160] = {0};
     bool header_ok = kv_read_header(fp, &hdr, &header_text_bytes);
+    const double t_after_hdr = now_sec();
     char *cached_text = NULL;
+    double t_after_payload = t_after_hdr;
     if (header_ok && header_text_bytes == text_bytes_match) {
         cached_text = xmalloc((size_t)header_text_bytes + 1);
         if (fread(cached_text, 1, header_text_bytes, fp) == header_text_bytes) {
@@ -9523,6 +9527,7 @@ static int wmbt_kv_load_text_prefix_from_wombatkv(
                                   header_text_bytes)) {
                 if (ds4_session_load_payload(s->session, fp, hdr.payload_bytes,
                                              err, sizeof(err)) == 0) {
+                    t_after_payload = now_sec();
                     const ds4_tokens *loaded_tokens =
                         ds4_session_tokens(s->session);
                     if (loaded_tokens && loaded_tokens->len == (int)hdr.tokens) {
@@ -9548,11 +9553,19 @@ static int wmbt_kv_load_text_prefix_from_wombatkv(
     free(cached_text);
     if (loaded > 0) {
         const double load_ms = (now_sec() - load_t0) * 1000.0;
+        const double cabi_ms  = (t_post_cabi  - t_pre_cabi) * 1000.0;
+        const double hdr_ms   = (t_after_hdr  - t_post_cabi) * 1000.0;
+        const double payload_ms = (t_after_payload - t_after_hdr) * 1000.0;
         fprintf(stderr,
                 "ds4-server: WombatKV load reason=replace_local tokens=%d "
                 "text=%u quant=%u load=%.1f ms sha=%s\n",
                 loaded, header_text_bytes, hdr.quant_bits, load_ms,
                 sha_match);
+        fprintf(stderr,
+                "[MyelonInstr] {\"scope\":\"ds4_load\",\"path\":\"replace_local\",\"stages\":{"
+                "\"cabi_get_kv_ms\":%.2f,\"hdr_read_ms\":%.2f,\"payload_load_ms\":%.2f,"
+                "\"post_cabi_total_ms\":%.2f,\"size_bytes\":%zu}}\n",
+                cabi_ms, hdr_ms, payload_ms, load_ms, bn);
         if (loaded_path_out) {
             char hint[64];
             snprintf(hint, sizeof(hint), "wmbt_kv-replace:%s", sha_match);

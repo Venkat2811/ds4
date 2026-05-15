@@ -688,6 +688,186 @@ static void test_kvblock_validation(void) {
     TEST_ASSERT(ds4_session_layer_compression_ratio(NULL, 0) == -1);
 }
 
+/* CPU-only save_block -> load_blocks roundtrip. Builds a CPU session,
+ * prefills 256 tokens, saves the first 128 as a block, then loads it
+ * into a fresh CPU session and byte-compares the compressed K/V slabs.
+ *
+ * This test requires the DS4 model file (DS4_TEST_MODEL or ds4flash.gguf
+ * in cwd). When the model isn't available it skips silently — the
+ * test_kvblock_validation entry covers the model-free surface. */
+static void test_kvblock_cpu_roundtrip(void) {
+    const char *model_path = test_model_path();
+    if (access(model_path, R_OK) != 0) {
+        fprintf(stderr,
+                "  (skipping kvblock CPU roundtrip — model %s not readable)\n",
+                model_path);
+        return;
+    }
+
+    ds4_engine_options opt = {
+        .model_path = model_path,
+        .backend = DS4_BACKEND_CPU,
+        .quality = false,
+    };
+    ds4_engine *engine = NULL;
+    TEST_ASSERT(ds4_engine_open(&engine, &opt) == 0);
+    if (!engine) return;
+
+    /* ctx must be >= 256 + headroom; pick something modest to keep
+     * the test fast. */
+    const int ctx_size = 1024;
+    const int total_tokens = 256;
+    const int block_tokens = 128;
+
+    /* Build a synthetic 256-token prompt by repeating a small set of
+     * valid token IDs. The exact tokens don't matter — we only care
+     * that prefill executes and writes compressed K/V rows. */
+    ds4_tokens prompt = {0};
+    for (int i = 0; i < total_tokens; i++) {
+        /* Use small token IDs known to be in-vocab. token 1..16 are
+         * safe for every GGUF tokenizer. */
+        ds4_tokens_push(&prompt, 1 + (i % 16));
+    }
+
+    ds4_session *src = NULL;
+    TEST_ASSERT(ds4_session_create(&src, engine, ctx_size) == 0);
+    if (!src) {
+        ds4_tokens_free(&prompt);
+        ds4_engine_close(engine);
+        return;
+    }
+
+    char err[256];
+    err[0] = 0;
+    int sync_rc = ds4_session_sync(src, &prompt, err, sizeof(err));
+    if (sync_rc != 0) {
+        fprintf(stderr, "  ds4_session_sync failed: %s\n", err);
+    }
+    TEST_ASSERT(sync_rc == 0);
+
+    /* Verify source has the expected compressed-row layout. */
+    const ds4_tokens *src_toks = ds4_session_tokens(src);
+    TEST_ASSERT(src_toks != NULL);
+    TEST_ASSERT(src_toks->len == total_tokens);
+
+    /* Save the first 128-token block to a tmpfile. */
+    FILE *blockfp = tmpfile();
+    TEST_ASSERT(blockfp != NULL);
+    if (!blockfp) {
+        ds4_session_free(src);
+        ds4_tokens_free(&prompt);
+        ds4_engine_close(engine);
+        return;
+    }
+    err[0] = 0;
+    int save_rc = ds4_session_save_block(src, blockfp, 0, block_tokens,
+                                         err, sizeof(err));
+    if (save_rc != 0) {
+        fprintf(stderr, "  save_block failed: %s\n", err);
+    }
+    TEST_ASSERT(save_rc == 0);
+    const long block_bytes = ftell(blockfp);
+    TEST_ASSERT(block_bytes > 0);
+    rewind(blockfp);
+
+    /* Sanity: first 4 bytes are the KVB1 magic. */
+    {
+        uint8_t b[4];
+        TEST_ASSERT(fread(b, 1, sizeof(b), blockfp) == sizeof(b));
+        const uint32_t got_magic = (uint32_t)b[0] |
+                                   ((uint32_t)b[1] << 8) |
+                                   ((uint32_t)b[2] << 16) |
+                                   ((uint32_t)b[3] << 24);
+        TEST_ASSERT(got_magic == 0x3142564Bu);
+        rewind(blockfp);
+    }
+
+    /* Create a fresh CPU session and load the block. */
+    ds4_session *dst = NULL;
+    TEST_ASSERT(ds4_session_create(&dst, engine, ctx_size) == 0);
+    if (!dst) {
+        fclose(blockfp);
+        ds4_session_free(src);
+        ds4_tokens_free(&prompt);
+        ds4_engine_close(engine);
+        return;
+    }
+
+    ds4_block_handle bh = {
+        .token_start = 0,
+        .token_end = block_tokens,
+        .fp = blockfp,
+        .payload_bytes = (size_t)block_bytes,
+    };
+    err[0] = 0;
+    int load_rc = ds4_session_load_blocks(dst, &bh, 1, err, sizeof(err));
+    if (load_rc != 0) {
+        fprintf(stderr, "  load_blocks failed: %s\n", err);
+    }
+    TEST_ASSERT(load_rc == 0);
+
+    /* Verify checkpoint state. */
+    const ds4_tokens *dst_toks = ds4_session_tokens(dst);
+    TEST_ASSERT(dst_toks != NULL);
+    TEST_ASSERT(dst_toks->len == block_tokens);
+
+    /* Roundtrip integrity check: re-save the dst block and byte-compare
+     * to the original. The wire format is deterministic given the
+     * cache state, so equal blocks ⇔ equivalent compressed slabs. This
+     * doesn't depend on poking at internal session structs. */
+    FILE *blockfp2 = tmpfile();
+    TEST_ASSERT(blockfp2 != NULL);
+    if (blockfp2) {
+        err[0] = 0;
+        int rc2 = ds4_session_save_block(dst, blockfp2, 0, block_tokens,
+                                         err, sizeof(err));
+        if (rc2 != 0) {
+            fprintf(stderr, "  save_block (dst) failed: %s\n", err);
+        }
+        TEST_ASSERT(rc2 == 0);
+        const long block_bytes2 = ftell(blockfp2);
+        TEST_ASSERT(block_bytes2 == block_bytes);
+
+        rewind(blockfp);
+        rewind(blockfp2);
+        uint8_t *buf1 = malloc((size_t)block_bytes);
+        uint8_t *buf2 = malloc((size_t)block_bytes);
+        TEST_ASSERT(buf1 != NULL && buf2 != NULL);
+        if (buf1 && buf2) {
+            TEST_ASSERT(fread(buf1, 1, (size_t)block_bytes, blockfp)
+                        == (size_t)block_bytes);
+            TEST_ASSERT(fread(buf2, 1, (size_t)block_bytes, blockfp2)
+                        == (size_t)block_bytes);
+            const int cmp = memcmp(buf1, buf2, (size_t)block_bytes);
+            if (cmp != 0) {
+                /* Find first mismatch byte for diagnostic. */
+                long first_mismatch = -1;
+                for (long i = 0; i < block_bytes; i++) {
+                    if (buf1[i] != buf2[i]) { first_mismatch = i; break; }
+                }
+                fprintf(stderr,
+                        "  kvblock roundtrip: re-saved block bytes differ at offset %ld\n",
+                        first_mismatch);
+            }
+            TEST_ASSERT(cmp == 0);
+        }
+        free(buf1);
+        free(buf2);
+        fclose(blockfp2);
+    }
+
+    fclose(blockfp);
+    ds4_session_free(dst);
+    ds4_session_free(src);
+    ds4_tokens_free(&prompt);
+    ds4_engine_close(engine);
+}
+
+static void test_kvblock_group(void) {
+    test_kvblock_validation();
+    test_kvblock_cpu_roundtrip();
+}
+
 typedef void (*test_fn)(void);
 
 typedef struct {
@@ -705,7 +885,7 @@ static const ds4_test_entry test_entries[] = {
     {"--metal-kernels", "metal-kernels", "isolated Metal kernel numeric regressions", test_metal_f16_matvec_fast_nr0_4},
 #endif
     {"--server",   "server",   "server parser/rendering/cache unit tests", test_server_unit_group},
-    {"--kvblock",  "kvblock",  "Tier B KVBlock alignment + arg-validation",  test_kvblock_validation},
+    {"--kvblock",  "kvblock",  "Tier B KVBlock alignment + save/load roundtrip",  test_kvblock_group},
 };
 
 static void test_print_help(const char *prog) {

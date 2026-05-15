@@ -16655,6 +16655,154 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 #endif
 }
 
+/* ============================================================================
+ * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1) — SKELETON
+ *
+ * Public API declared in ds4.h. These skeletons:
+ *   - Validate block_tokens alignment so callers fail fast on bad config
+ *   - Return ds4_session_block_layout / compression_ratio honestly using
+ *     the existing engine state (those are read-only and don't need full
+ *     Tier B impl to be useful)
+ *   - Return -1 with "Tier B not implemented" from save_block /
+ *     load_blocks until the per-layer slicing lands.
+ *
+ * The ABI is now reserved so WombatKV bindings, ds4-cabi, and any
+ * external integration crates can compile against the surface today.
+ * ============================================================================ */
+
+/* Internal: validate block_tokens is in {4,8,16,32,64,128}. */
+static int kvblock_validate_block_tokens(int block_tokens) {
+    return (block_tokens == 4   ||
+            block_tokens == 8   ||
+            block_tokens == 16  ||
+            block_tokens == 32  ||
+            block_tokens == 64  ||
+            block_tokens == 128) ? 0 : -1;
+}
+
+int ds4_session_block_layout(ds4_session *s,
+                             int *out_n_layers,
+                             size_t *out_raw_bytes_per_tok,
+                             size_t *out_indexer_bytes_per_tok,
+                             char *err, size_t errlen) {
+    if (!s) {
+        payload_set_err(err, errlen, "ds4_session_block_layout: null session");
+        return -1;
+    }
+    /* Raw KV: per layer, per token = DS4_N_HEAD_DIM * sizeof(float).
+     * Across all layers: DS4_N_LAYER * that. */
+    const size_t raw_per_layer_tok = (size_t)DS4_N_HEAD_DIM * sizeof(float);
+    /* Indexer KV exists only on ratio-4 (even) layers, contributes
+     * DS4_N_INDEXER_HEAD_DIM * sizeof(float) per row per ratio-4 layer.
+     * The ratio table is layer-local; the simplest summary is "per
+     * ratio-4 layer" — caller multiplies by the ratio-4-layer count. */
+    const size_t indexer_per_ratio4_layer_tok =
+        (size_t)DS4_N_INDEXER_HEAD_DIM * sizeof(float);
+
+    if (out_n_layers) *out_n_layers = DS4_N_LAYER;
+    if (out_raw_bytes_per_tok)
+        *out_raw_bytes_per_tok = (size_t)DS4_N_LAYER * raw_per_layer_tok;
+    if (out_indexer_bytes_per_tok)
+        *out_indexer_bytes_per_tok = indexer_per_ratio4_layer_tok;
+    return 0;
+}
+
+int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx) {
+    if (!s) return -1;
+    if (layer_idx < 0 || layer_idx >= DS4_N_LAYER) return -1;
+    /* Mirror the layer-table semantics from ds4.c §"Layer compression":
+     *   layers 0, 1: ratio 0 (raw only)
+     *   even layers (2..42): ratio 4
+     *   odd layers  (3..41): ratio 128
+     * See ds4.c:411-414 audit notes. */
+    if (layer_idx == 0 || layer_idx == 1) return 0;
+    return (layer_idx % 2 == 0) ? 4 : 128;
+}
+
+int ds4_session_save_block(ds4_session *s, FILE *fp,
+                           int token_start, int token_end,
+                           char *err, size_t errlen) {
+    if (!s || !fp) {
+        payload_set_err(err, errlen, "ds4_session_save_block: null arg");
+        return -1;
+    }
+    if (token_end <= token_start) {
+        payload_set_err(err, errlen, "ds4_session_save_block: empty range");
+        return -1;
+    }
+    const int block_tokens = token_end - token_start;
+    if (kvblock_validate_block_tokens(block_tokens) != 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: block_tokens must be in {4,8,16,32,64,128}");
+        return -1;
+    }
+    if (token_start % block_tokens != 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: token_start must align to block_tokens");
+        return -1;
+    }
+    const ds4_tokens *toks = ds4_session_tokens(s);
+    if (!toks || token_end > toks->len) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: token_end exceeds session token count");
+        return -1;
+    }
+    /* TODO(RFC 0007 §5.3 impl): per-layer slice of raw + compressed K/V.
+     * Returning -1 with informative err for now so callers can detect
+     * unimplemented state and fall back to ds4_session_save_payload. */
+    payload_set_err(err, errlen,
+        "ds4_session_save_block: Tier B per-layer slicing not yet implemented");
+    return -1;
+}
+
+int ds4_session_load_blocks(ds4_session *s,
+                            const ds4_block_handle *blocks, size_t block_count,
+                            char *err, size_t errlen) {
+    if (!s) {
+        payload_set_err(err, errlen, "ds4_session_load_blocks: null session");
+        return -1;
+    }
+    if (!blocks || block_count == 0) {
+        payload_set_err(err, errlen, "ds4_session_load_blocks: empty block list");
+        return -1;
+    }
+    /* Validate contiguity + alignment. */
+    int prev_end = 0;
+    int block_tokens = 0;
+    for (size_t i = 0; i < block_count; i++) {
+        const ds4_block_handle *b = &blocks[i];
+        if (i == 0 && b->token_start != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: first block must start at token 0");
+            return -1;
+        }
+        if (i > 0 && b->token_start != prev_end) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: blocks must be contiguous");
+            return -1;
+        }
+        const int bt = b->token_end - b->token_start;
+        if (kvblock_validate_block_tokens(bt) != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: bad block_tokens (must be {4..128 allowed})");
+            return -1;
+        }
+        if (i == 0) block_tokens = bt;
+        else if (bt != block_tokens) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: mixed block_tokens not supported");
+            return -1;
+        }
+        prev_end = b->token_end;
+    }
+    /* TODO(RFC 0007 §5.3 impl): per-layer memcpy + partial-prefix sync.
+     * For now: return -1 with informative err so callers can detect
+     * unimplemented state and fall back to ds4_session_load_payload. */
+    payload_set_err(err, errlen,
+        "ds4_session_load_blocks: Tier B per-layer install not yet implemented");
+    return -1;
+}
+
 int ds4_session_save_snapshot(ds4_session *s, ds4_session_snapshot *snap, char *err, size_t errlen) {
     if (!s || !snap) {
         payload_set_err(err, errlen, "invalid session snapshot save");

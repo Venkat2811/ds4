@@ -103,25 +103,28 @@ static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
 /* Initialise the WombatKV handle from env (WMBT_KV_S3_*, WMBT_KV_*).
  * Required runtime env: DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
  * (the 24-hex-char model fingerprint digest the adapter / sidecar / engine
- * all agree on). Returns silently if either is unset — the hooks degrade
- * to no-ops. When enabled, WombatKV is authoritative: ds4 skips local
- * .kv-disk writes and reconstructs KV state from the WombatKV payload on
- * load. */
+ * all agree on). If DS4_WOMBATKV_ENABLE is unset, this is a no-op and ds4
+ * runs vanilla. If DS4_WOMBATKV_ENABLE is set but anything required is
+ * missing/broken (fingerprint, S3 reach, daemon connect), exits with
+ * non-zero — silent fallback to local kv-disk would mask a config error
+ * and quietly serve worse perf than the user requested. */
 static void wmbt_kv_init_hooks(void) {
     if (!getenv("DS4_WOMBATKV_ENABLE")) return;
     const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
     if (!fp || strlen(fp) < 24) {
         fprintf(stderr,
-                "ds4-server: DS4_WOMBATKV_ENABLE set but "
-                "DS4_WMBT_KV_FINGERPRINT24 is missing/short; WombatKV disabled\n");
-        return;
+                "ds4-server: DS4_WOMBATKV_ENABLE=1 but DS4_WMBT_KV_FINGERPRINT24 "
+                "is missing or shorter than 24 hex chars; refusing to start\n");
+        exit(2);
     }
     g_wmbt_kv_handle = wmbt_kv_init_from_env();
     if (!g_wmbt_kv_handle) {
         const char *err = wmbt_kv_last_error();
-        fprintf(stderr, "ds4-server: wmbt_kv_init_from_env failed: %s\n",
+        fprintf(stderr,
+                "ds4-server: WombatKV init failed (DS4_WOMBATKV_ENABLE=1 was set, "
+                "refusing to silently fall back to local kv-disk): %s\n",
                 err ? err : "(unknown)");
-        return;
+        exit(2);
     }
     const char *ns = getenv("WMBT_KV_NAMESPACE");
     g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");

@@ -103,10 +103,12 @@ static char *xstrdup(const char *s) {
 static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
 
 /* Initialise the WombatKV handle from env (WMBT_KV_S3_*, WMBT_KV_*).
- * Required runtime env: DS4_WOMBATKV_ENABLE=1 and
- * DS4_WMBT_KV_FINGERPRINT24 (the 24-hex-char model fingerprint digest the
- * adapter / sidecar / engine all agree on). Returns silently if either
- * is unset — the hooks degrade to no-ops. */
+ * Required runtime env: DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
+ * (the 24-hex-char model fingerprint digest the adapter / sidecar / engine
+ * all agree on). Returns silently if either is unset — the hooks degrade
+ * to no-ops. When enabled, WombatKV is authoritative: ds4 skips local
+ * .kv-disk writes and reconstructs KV state from the WombatKV payload on
+ * load. */
 static void wmbt_kv_init_hooks(void) {
     if (!getenv("DS4_WOMBATKV_ENABLE")) return;
     const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
@@ -126,12 +128,10 @@ static void wmbt_kv_init_hooks(void) {
     const char *ns = getenv("WMBT_KV_NAMESPACE");
     g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");
     g_wmbt_kv_fingerprint = xstrdup(fp);
-    const char *replace_env = getenv("DS4_WOMBATKV_REPLACE_LOCAL");
-    g_wmbt_kv_replace_local = replace_env && replace_env[0] == '1' ? 1 : 0;
+    g_wmbt_kv_replace_local = 1;
     fprintf(stderr,
-            "ds4-server: WombatKV hooks enabled namespace=%s fingerprint=%s "
-            "replace_local=%d\n",
-            g_wmbt_kv_namespace, g_wmbt_kv_fingerprint, g_wmbt_kv_replace_local);
+            "ds4-server: WombatKV hooks enabled namespace=%s fingerprint=%s\n",
+            g_wmbt_kv_namespace, g_wmbt_kv_fingerprint);
 }
 
 static void wmbt_kv_shutdown_hooks(void) {
@@ -9319,7 +9319,7 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
 
 #ifdef DS4_WOMBATKV
 /* ================================================================== *
- * Phase 3 (REPLACE_LOCAL mode): WombatKV is the only cache.
+ * Phase 3: WombatKV is the only cache (no local .kv-disk writes).
  *
  * Placed AFTER all kv_*-helpers (`kv_read_header`, `byte_prefix_match`,
  * `build_prompt_from_exact_prefix_and_text_suffix`, `kv_tool_map_*`)

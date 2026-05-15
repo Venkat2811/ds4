@@ -636,6 +636,58 @@ static void test_server_unit_group(void) {
     ds4_server_unit_tests_run();
 }
 
+/* ============================================================================
+ * KVBlock (RFC 0007 Tier B) — model-free unit tests.
+ *
+ * These verify the public alignment rule and the API entry points'
+ * arg-validation surface without booting an engine or session, so they
+ * run as part of `make test` even when DS4_TEST_MODEL isn't available.
+ * The full end-to-end roundtrip vs save_payload is exercised by the
+ * WombatKV-side integration suite which has the model on hand.
+ * ============================================================================ */
+static void test_kvblock_validation(void) {
+    /* Rule: positive multiple of 128, <= 8192. */
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(0)   == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(-1)  == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(-128)== -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(64)  == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(127) == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(129) == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(255) == -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(8193)== -1);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(9999)== -1);
+
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(128) == 0);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(256) == 0);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(384) == 0);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(512) == 0);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(1024)== 0);
+    TEST_ASSERT(ds4_kvblock_validate_block_tokens(8192)== 0);
+
+    /* save_block null-arg surface (does not require a session). */
+    char err[128];
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_save_block(NULL, stderr, 0, 128, err, sizeof(err)) == -1);
+    TEST_ASSERT(err[0] != 0);
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_save_block((ds4_session *)0, NULL, 0, 128, err, sizeof(err)) == -1);
+    TEST_ASSERT(err[0] != 0);
+
+    /* load_blocks null-arg surface. */
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_load_blocks(NULL, NULL, 0, err, sizeof(err)) == -1);
+    TEST_ASSERT(err[0] != 0);
+
+    /* block_layout / compression_ratio null-session paths. */
+    int n_layers = 0;
+    size_t raw_bpt = 0, idx_bpt = 0;
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_block_layout(NULL, &n_layers, &raw_bpt, &idx_bpt,
+                                          err, sizeof(err)) == -1);
+    TEST_ASSERT(err[0] != 0);
+    TEST_ASSERT(ds4_session_layer_compression_ratio(NULL, 0) == -1);
+}
+
 typedef void (*test_fn)(void);
 
 typedef struct {
@@ -652,7 +704,8 @@ static const ds4_test_entry test_entries[] = {
     {"--logprob-vectors", "logprob-vectors", "official API top-logprob vector comparison", test_official_logprob_vectors},
     {"--metal-kernels", "metal-kernels", "isolated Metal kernel numeric regressions", test_metal_f16_matvec_fast_nr0_4},
 #endif
-    {"--server", "server", "server parser/rendering/cache unit tests", test_server_unit_group},
+    {"--server",   "server",   "server parser/rendering/cache unit tests", test_server_unit_group},
+    {"--kvblock",  "kvblock",  "Tier B KVBlock alignment + arg-validation",  test_kvblock_validation},
 };
 
 static void test_print_help(const char *prog) {

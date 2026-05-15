@@ -42,6 +42,21 @@ static volatile sig_atomic_t g_listen_fd = -1;
 #define DS4_SERVER_IO_TIMEOUT_SEC 10
 #define DS4_SERVER_SEND_STALL_TIMEOUT_MS 2000
 
+#ifdef DS4_WOMBATKV
+/* Phase 2 in-tree WombatKV hooks. Gated by `-DDS4_WOMBATKV` at
+ * compile time and `DS4_WOMBATKV_ENABLE=1` at runtime so this is a
+ * pure no-op unless both gates are on. RFC 0005 §3.1. */
+#include "wombatkv.h"
+static wmbt_kv_handle_t *g_wmbt_kv_handle = NULL;
+static char *g_wmbt_kv_namespace = NULL;
+static char *g_wmbt_kv_fingerprint = NULL;
+/* Phase 3: when this is set, ds4 stops writing .kv files to
+ * --kv-disk-dir entirely. All saves go directly to WombatKV via
+ * open_memstream + wmbt_kv_put_kv; all loads come from
+ * wmbt_kv_list_kv_keys + wmbt_kv_get_kv_borrowed + in-memory parse. */
+static int g_wmbt_kv_replace_local = 0;
+#endif
+
 static void stop_signal_handler(int sig) {
     (void)sig;
     if (g_stop_requested) _exit(130);
@@ -82,6 +97,134 @@ static char *xstrdup(const char *s) {
     memcpy(p, s, n + 1);
     return p;
 }
+
+#ifdef DS4_WOMBATKV
+/* Forward decl — sha1_bytes_hex is defined later in the file. */
+static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
+
+/* Initialise the WombatKV handle from env (WMBT_KV_S3_*, WMBT_KV_*).
+ * Required runtime env: DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
+ * (the 24-hex-char model fingerprint digest the adapter / sidecar / engine
+ * all agree on). If DS4_WOMBATKV_ENABLE is unset, this is a no-op and ds4
+ * runs vanilla. If DS4_WOMBATKV_ENABLE is set but anything required is
+ * missing/broken (fingerprint, S3 reach, daemon connect), exits with
+ * non-zero — silent fallback to local kv-disk would mask a config error
+ * and quietly serve worse perf than the user requested. */
+static void wmbt_kv_init_hooks(void) {
+    if (!getenv("DS4_WOMBATKV_ENABLE")) return;
+    const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
+    if (!fp || strlen(fp) < 24) {
+        fprintf(stderr,
+                "ds4-server: DS4_WOMBATKV_ENABLE=1 but DS4_WMBT_KV_FINGERPRINT24 "
+                "is missing or shorter than 24 hex chars; refusing to start\n");
+        exit(2);
+    }
+    g_wmbt_kv_handle = wmbt_kv_init_from_env();
+    if (!g_wmbt_kv_handle) {
+        const char *err = wmbt_kv_last_error();
+        fprintf(stderr,
+                "ds4-server: WombatKV init failed (DS4_WOMBATKV_ENABLE=1 was set, "
+                "refusing to silently fall back to local kv-disk): %s\n",
+                err ? err : "(unknown)");
+        exit(2);
+    }
+    const char *ns = getenv("WMBT_KV_NAMESPACE");
+    g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");
+    g_wmbt_kv_fingerprint = xstrdup(fp);
+    g_wmbt_kv_replace_local = 1;
+    fprintf(stderr,
+            "ds4-server: WombatKV hooks enabled namespace=%s fingerprint=%s\n",
+            g_wmbt_kv_namespace, g_wmbt_kv_fingerprint);
+}
+
+static void wmbt_kv_shutdown_hooks(void) {
+    if (g_wmbt_kv_handle) {
+        wmbt_kv_free(g_wmbt_kv_handle);
+        g_wmbt_kv_handle = NULL;
+    }
+    free(g_wmbt_kv_namespace);
+    g_wmbt_kv_namespace = NULL;
+    free(g_wmbt_kv_fingerprint);
+    g_wmbt_kv_fingerprint = NULL;
+}
+
+/* Read the freshly-written .kv file and PUT it into the WombatKV
+ * namespace under the canonical key. Errors are logged but never
+ * propagate — the local save already succeeded, the cache is correct
+ * either way. */
+static void wmbt_kv_shadow_kv_file(const char *path, const char *sha,
+                                int quant_bits, const char *reason) {
+    if (!g_wmbt_kv_handle || !sha || !path) return;
+    FILE *rf = fopen(path, "rb");
+    if (!rf) return;
+    if (fseek(rf, 0, SEEK_END) != 0) { fclose(rf); return; }
+    long sz = ftell(rf);
+    if (sz < 0) { fclose(rf); return; }
+    if (fseek(rf, 0, SEEK_SET) != 0) { fclose(rf); return; }
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(rf); return; }
+    size_t got = fread(buf, 1, (size_t)sz, rf);
+    fclose(rf);
+    if (got != (size_t)sz) { free(buf); return; }
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wombatkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wmbt_kv_fingerprint, sha, quant_bits);
+    int64_t rc = wmbt_kv_put_kv(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
+                             buf, (size_t)sz);
+    if (rc < 0) {
+        const char *err = wmbt_kv_last_error();
+        fprintf(stderr, "ds4-server: WombatKV shadow failed (%s): %s\n",
+                reason, err ? err : "(unknown)");
+    } else {
+        fprintf(stderr,
+                "ds4-server: WombatKV shadowed key=%s reason=%s size=%ld\n",
+                wkey, reason, sz);
+    }
+    free(buf);
+}
+
+/* Probe WombatKV for the prompt's SHA1; on hit, write the bytes to the
+ * local --kv-disk-dir/<sha>.kv path. Returns 1 if a file was
+ * materialised, 0 otherwise. The caller must then refresh its kv-disk-
+ * dir scan and retry the local lookup. */
+static int wmbt_kv_probe_and_materialise(const char *prompt_text, size_t prompt_bytes,
+                                      int quant_bits, const char *target_path) {
+    if (!g_wmbt_kv_handle || !prompt_text || !target_path) return 0;
+    char prompt_sha[41];
+    sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wombatkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wmbt_kv_fingerprint, prompt_sha, quant_bits);
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wmbt_kv_borrow_t *borrow = NULL;
+    int32_t rc = wmbt_kv_get_kv_borrowed(g_wmbt_kv_handle, g_wmbt_kv_namespace,
+                                      wkey, &bp, &bn, &borrow);
+    if (rc != 1 || !bp || bn == 0) {
+        if (borrow) wmbt_kv_release_borrow(borrow);
+        return 0;
+    }
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", target_path, (long)getpid());
+    FILE *wf = fopen(tmp, "wb");
+    int ok = 0;
+    if (wf) {
+        ok = (fwrite(bp, 1, bn, wf) == bn) && (fflush(wf) == 0);
+        if (fclose(wf) != 0) ok = 0;
+        if (ok && rename(tmp, target_path) != 0) ok = 0;
+        if (!ok) unlink(tmp);
+    }
+    wmbt_kv_release_borrow(borrow);
+    if (ok) {
+        fprintf(stderr,
+                "ds4-server: WombatKV prefetched sha=%s size=%zu\n",
+                prompt_sha, bn);
+    }
+    return ok;
+}
+#endif /* DS4_WOMBATKV */
 
 static bool random_bytes(void *dst, size_t len) {
     unsigned char *p = dst;
@@ -9177,6 +9320,249 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
     (void)ok;
 }
 
+#ifdef DS4_WOMBATKV
+/* ================================================================== *
+ * Phase 3: WombatKV is the only cache (no local .kv-disk writes).
+ *
+ * Placed AFTER all kv_*-helpers (`kv_read_header`, `byte_prefix_match`,
+ * `build_prompt_from_exact_prefix_and_text_suffix`, `kv_tool_map_*`)
+ * and the `kv_entry` / `server` / `stop_list` typedefs so we don't
+ * need forward declarations.
+ *
+ * Key schema v2:
+ *     wombatkv/ds4/v2/model=<fp24>/bytes=<text_bytes:010>/sha1=<sha>-q<q>
+ * `bytes=` is the byte length of the cached rendered text (NOT the
+ * token count) — matches ds4's prefix-by-bytes contract.
+ * ================================================================== */
+
+#define WMBT_KV_V2_KEY_PREFIX "wombatkv/ds4/v2"
+
+static int wmbt_kv_v2_key(char *out, size_t out_cap, uint32_t text_bytes,
+                       const char *sha, int quant_bits) {
+    int n = snprintf(out, out_cap, "%s/model=%s/bytes=%010u/sha1=%s-q%d",
+                     WMBT_KV_V2_KEY_PREFIX, g_wmbt_kv_fingerprint,
+                     (unsigned)text_bytes, sha, quant_bits);
+    return (n > 0 && (size_t)n < out_cap) ? n : -1;
+}
+
+/* Build the full .kv-format payload in memory (header + textlen + text
+ * + ds4_session payload + optional tool map) and PUT it to WombatKV.
+ * Returns true on success; on failure `err` is populated. */
+static bool wmbt_kv_store_live_prefix_to_wombatkv(
+    server *s, const uint8_t *header_bytes, size_t header_len,
+    const uint8_t *text_len_bytes, size_t text_len_len,
+    const char *text, size_t text_len, const char *sha, int quant_bits,
+    const char *reason, char *err, size_t errlen) {
+    char *buf = NULL;
+    size_t buf_size = 0;
+    FILE *mem = open_memstream(&buf, &buf_size);
+    if (!mem) {
+        snprintf(err, errlen, "open_memstream failed: %s", strerror(errno));
+        return false;
+    }
+    bool ok = fwrite(header_bytes, 1, header_len, mem) == header_len &&
+              fwrite(text_len_bytes, 1, text_len_len, mem) == text_len_len &&
+              fwrite(text, 1, text_len, mem) == text_len &&
+              ds4_session_save_payload(s->session, mem, err, errlen) == 0;
+    uint64_t tool_map_bytes = 0;
+    if (ok) {
+        ok = kv_tool_map_write(s, mem, text, &tool_map_bytes) &&
+             fflush(mem) == 0;
+    }
+    if (fclose(mem) != 0) ok = false;
+    if (!ok) {
+        free(buf);
+        return false;
+    }
+    char wkey[320];
+    if (wmbt_kv_v2_key(wkey, sizeof(wkey), (uint32_t)text_len, sha,
+                    quant_bits) < 0) {
+        snprintf(err, errlen, "WombatKV v2 key too long");
+        free(buf);
+        return false;
+    }
+    int64_t rc = wmbt_kv_put_kv(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
+                             (const uint8_t *)buf, buf_size);
+    if (rc < 0) {
+        const char *terr = wmbt_kv_last_error();
+        snprintf(err, errlen, "wmbt_kv_put_kv failed (%s): %s", reason,
+                 terr ? terr : "(unknown)");
+        free(buf);
+        return false;
+    }
+    fprintf(stderr,
+            "ds4-server: WombatKV store reason=%s text_bytes=%zu size=%zu "
+            "key=%s\n",
+            reason, text_len, buf_size, wkey);
+    free(buf);
+    return true;
+}
+
+/* List keys in the WombatKV namespace, parse v2 keys for
+ * (text_bytes, sha, quant), and find the LONGEST text-prefix of
+ * `prompt_text` whose hash matches a cached sha. Returns 1 on hit
+ * (fills *out_*), 0 on no match, -1 on list error. */
+static int wmbt_kv_find_longest_text_prefix(
+    const char *prompt_text, size_t prompt_bytes, int quant_bits,
+    uint32_t *out_text_bytes, char out_sha[41]) {
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wmbt_kv_borrow_t *borrow = NULL;
+    int32_t rc = wmbt_kv_list_kv_keys_borrowed(g_wmbt_kv_handle, g_wmbt_kv_namespace,
+                                            &bp, &bn, &borrow);
+    if (rc < 0) {
+        if (borrow) wmbt_kv_release_borrow(borrow);
+        return -1;
+    }
+    uint32_t best_text_bytes = 0;
+    char best_sha[41] = {0};
+    /* `wombatkv_daemon::encode_key_batch` layout:
+     *   13-byte magic "WMBT_KV_KEYS_V1\0"
+     *   u32 count (LE)
+     *   for each: u32 len (LE), len bytes. */
+    static const char WMBT_KV_KEYS_MAGIC[] = "WMBT_KV_KEYS_V1";
+    const size_t MAGIC_LEN = sizeof(WMBT_KV_KEYS_MAGIC); /* 13 incl. NUL */
+    if (bp && bn >= MAGIC_LEN + 4 &&
+        memcmp(bp, WMBT_KV_KEYS_MAGIC, MAGIC_LEN) == 0) {
+        size_t off = MAGIC_LEN;
+        uint32_t count = (uint32_t)bp[off] | ((uint32_t)bp[off + 1] << 8) |
+                         ((uint32_t)bp[off + 2] << 16) |
+                         ((uint32_t)bp[off + 3] << 24);
+        off += 4;
+        char fp_prefix[160];
+        int fp_prefix_len =
+            snprintf(fp_prefix, sizeof(fp_prefix), "%s/model=%s/bytes=",
+                     WMBT_KV_V2_KEY_PREFIX, g_wmbt_kv_fingerprint);
+        for (uint32_t i = 0; i < count && off + 4 <= bn; i++) {
+            uint32_t klen = (uint32_t)bp[off] | ((uint32_t)bp[off + 1] << 8) |
+                            ((uint32_t)bp[off + 2] << 16) |
+                            ((uint32_t)bp[off + 3] << 24);
+            off += 4;
+            if (off + klen > bn) break;
+            const char *key = (const char *)(bp + off);
+            off += klen;
+            if (klen < (uint32_t)fp_prefix_len) continue;
+            if (memcmp(key, fp_prefix, (size_t)fp_prefix_len) != 0) continue;
+            const char *p = key + fp_prefix_len;
+            if (klen - (uint32_t)fp_prefix_len < 10 + 6 + 40 + 2) continue;
+            uint32_t cand_bytes = 0;
+            bool bytes_ok = true;
+            for (int j = 0; j < 10; j++) {
+                if (p[j] < '0' || p[j] > '9') {
+                    bytes_ok = false;
+                    break;
+                }
+                cand_bytes = cand_bytes * 10 + (uint32_t)(p[j] - '0');
+            }
+            if (!bytes_ok) continue;
+            if ((size_t)cand_bytes > prompt_bytes) continue;
+            if (cand_bytes <= best_text_bytes) continue;
+            if (strncmp(p + 10, "/sha1=", 6) != 0) continue;
+            const char *sha_p = p + 10 + 6;
+            if (sha_p[40] != '-' || sha_p[41] != 'q') continue;
+            int cand_q = 0;
+            const char *q_p = sha_p + 42;
+            while ((size_t)(q_p - key) < klen && *q_p >= '0' && *q_p <= '9') {
+                cand_q = cand_q * 10 + (*q_p - '0');
+                q_p++;
+            }
+            if (cand_q != quant_bits) continue;
+            char prompt_prefix_sha[41];
+            sha1_bytes_hex(prompt_text, cand_bytes, prompt_prefix_sha);
+            if (memcmp(prompt_prefix_sha, sha_p, 40) != 0) continue;
+            best_text_bytes = cand_bytes;
+            memcpy(best_sha, sha_p, 40);
+            best_sha[40] = '\0';
+        }
+    }
+    wmbt_kv_release_borrow(borrow);
+    if (best_text_bytes == 0) return 0;
+    *out_text_bytes = best_text_bytes;
+    memcpy(out_sha, best_sha, 41);
+    return 1;
+}
+
+/* GET the v2 entry by (text_bytes, sha), fmemopen-load into the
+ * session. Mirrors `wmbt_kv_try_load_direct` but takes the prefix-match
+ * result as input rather than computing from the full prompt. */
+static int wmbt_kv_load_text_prefix_from_wombatkv(
+    server *s, const char *prompt_text, size_t prompt_bytes,
+    uint32_t text_bytes_match, const char *sha_match, int quant_bits,
+    ds4_tokens *effective_prompt, char **loaded_path_out) {
+    char wkey[320];
+    if (wmbt_kv_v2_key(wkey, sizeof(wkey), text_bytes_match, sha_match,
+                    quant_bits) < 0) {
+        return 0;
+    }
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wmbt_kv_borrow_t *borrow = NULL;
+    int32_t rc = wmbt_kv_get_kv_borrowed(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
+                                      &bp, &bn, &borrow);
+    if (rc != 1 || !bp || bn == 0) {
+        if (borrow) wmbt_kv_release_borrow(borrow);
+        return 0;
+    }
+    const double load_t0 = now_sec();
+    FILE *fp = fmemopen((void *)bp, bn, "rb");
+    if (!fp) {
+        wmbt_kv_release_borrow(borrow);
+        return 0;
+    }
+    kv_entry hdr = {0};
+    uint32_t header_text_bytes = 0;
+    int loaded = 0;
+    char err[160] = {0};
+    bool header_ok = kv_read_header(fp, &hdr, &header_text_bytes);
+    char *cached_text = NULL;
+    if (header_ok && header_text_bytes == text_bytes_match) {
+        cached_text = xmalloc((size_t)header_text_bytes + 1);
+        if (fread(cached_text, 1, header_text_bytes, fp) == header_text_bytes) {
+            cached_text[header_text_bytes] = '\0';
+            if (byte_prefix_match(prompt_text, prompt_bytes, cached_text,
+                                  header_text_bytes)) {
+                if (ds4_session_load_payload(s->session, fp, hdr.payload_bytes,
+                                             err, sizeof(err)) == 0) {
+                    const ds4_tokens *loaded_tokens =
+                        ds4_session_tokens(s->session);
+                    if (loaded_tokens && loaded_tokens->len == (int)hdr.tokens) {
+                        loaded = (int)hdr.tokens;
+                        if (effective_prompt) {
+                            build_prompt_from_exact_prefix_and_text_suffix(
+                                s->engine, loaded_tokens,
+                                prompt_text + header_text_bytes,
+                                effective_prompt);
+                        }
+                        if (hdr.ext_flags & KV_EXT_TOOL_MAP) {
+                            kv_tool_map_load_from_pos(s, fp, NULL);
+                        }
+                    } else {
+                        ds4_session_invalidate(s->session);
+                    }
+                }
+            }
+        }
+    }
+    fclose(fp);
+    wmbt_kv_release_borrow(borrow);
+    free(cached_text);
+    if (loaded > 0) {
+        const double load_ms = (now_sec() - load_t0) * 1000.0;
+        fprintf(stderr,
+                "ds4-server: WombatKV load reason=replace_local tokens=%d "
+                "text=%u quant=%u load=%.1f ms sha=%s\n",
+                loaded, header_text_bytes, hdr.quant_bits, load_ms,
+                sha_match);
+        if (loaded_path_out) {
+            char hint[64];
+            snprintf(hint, sizeof(hint), "wmbt_kv-replace:%s", sha_match);
+            *loaded_path_out = xstrdup(hint);
+        }
+    }
+    return loaded;
+}
+#endif /* DS4_WOMBATKV */
+
 static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
                                             int store_len, const char *reason,
                                             const char *cache_text_override,
@@ -9261,6 +9647,49 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
 
     char sha[41];
     sha1_bytes_hex(text, text_len, sha);
+
+#ifdef DS4_WOMBATKV
+    /* Phase 3 Path X: skip local disk entirely. We still build a real
+     * .kv-format buffer (header + textlen + text + payload + tool map)
+     * in memory and PUT it under the v2 key — readers (incl. peers and
+     * future restarts) reconstruct via fmemopen the same way the local
+     * path would have via fopen. */
+    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+        const uint64_t now = (uint64_t)time(NULL);
+        uint8_t h[KV_CACHE_FIXED_HEADER];
+        uint8_t ext_flags = tool_memory_count_dsml_in_text(s, text) > 0
+                                ? KV_EXT_TOOL_MAP : 0;
+        kv_fill_header(h, (uint8_t)quant_bits, kv_reason_code(reason),
+                       ext_flags, (uint32_t)store_tokens.len, 0,
+                       (uint32_t)ds4_session_ctx(s->session), now, now,
+                       payload_bytes);
+        uint8_t tb[4];
+        le_put32(tb, (uint32_t)text_len);
+        char terr[160] = {0};
+        const double save_t0 = now_sec();
+        const int saved_tokens = store_tokens.len;
+        const int trimmed = original_len - store_tokens.len;
+        bool ok = wmbt_kv_store_live_prefix_to_wombatkv(
+            s, h, sizeof(h), tb, sizeof(tb), text, text_len, sha,
+            quant_bits, reason, terr, sizeof(terr));
+        const double save_ms = (now_sec() - save_t0) * 1000.0;
+        if (ok) {
+            server_log(DS4_LOG_KVCACHE,
+                       "ds4-server: WombatKV replace store tokens=%d trimmed=%d "
+                       "reason=%s save=%.1f ms",
+                       saved_tokens, trimmed, reason, save_ms);
+        } else {
+            server_log(DS4_LOG_KVCACHE,
+                       "ds4-server: WombatKV replace store FAILED (%s): %s "
+                       "save=%.1f ms",
+                       reason, terr, save_ms);
+        }
+        free(text);
+        ds4_tokens_free(&store_tokens);
+        return ok;
+    }
+#endif
+
     char *path = kv_path_for_sha(kc, sha);
 
     if (kv_cache_existing_compatible(kc, path, sha, text, text_len,
@@ -9350,6 +9779,14 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
                    (double)(KV_CACHE_FIXED_HEADER + 4ull + text_len + payload_bytes + tool_map_bytes) / (1024.0 * 1024.0),
                    save_ms);
         kv_cache_evict(kc, live_tokens, sha);
+#ifdef DS4_WOMBATKV
+        /* Hook A — RFC 0005 §3.1: shadow the just-written .kv into the
+         * WombatKV namespace so peer engines / restarts can recover it
+         * from cache/S3 without touching the local disk cache.
+         * (Deleted later in this branch by commit f1ffd7b; keeping it
+         * here so each commit replays correctly during the rebase.) */
+        wmbt_kv_shadow_kv_file(path, sha, quant_bits, reason);
+#endif
     }
     free(tmp);
     free(text);
@@ -9461,6 +9898,123 @@ static int kv_cache_find_text_prefix(kv_disk_cache *kc, const char *prompt_text,
     return best;
 }
 
+#ifdef DS4_WOMBATKV
+/* Hook B cache-direct: probe WombatKV, on hit load straight into the
+ * ds4 session from an in-memory FILE* (fmemopen) instead of round-
+ * tripping through `--kv-disk-dir`. Saves ~30-50 ms of disk write +
+ * read at this prompt size and removes the local-disk dependency for
+ * the warm path entirely.
+ *
+ * Returns the token count on success, 0 on miss/error. Mirrors the
+ * disk-path body of kv_cache_try_load_text. */
+static int wmbt_kv_try_load_direct(server *s, const char *prompt_text,
+                                size_t prompt_bytes, int quant_bits,
+                                ds4_tokens *effective_prompt,
+                                char **loaded_path_out) {
+    if (!g_wmbt_kv_handle) return 0;
+    char prompt_sha[41];
+    sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+    char wkey[256];
+    snprintf(wkey, sizeof(wkey),
+             "wombatkv/ds4/v1/model=%s/sha1=%s-q%d",
+             g_wmbt_kv_fingerprint, prompt_sha, quant_bits);
+    const uint8_t *bp = NULL;
+    size_t bn = 0;
+    wmbt_kv_borrow_t *borrow = NULL;
+    int32_t rc = wmbt_kv_get_kv_borrowed(g_wmbt_kv_handle, g_wmbt_kv_namespace,
+                                      wkey, &bp, &bn, &borrow);
+    if (rc != 1 || !bp || bn == 0) {
+        if (borrow) wmbt_kv_release_borrow(borrow);
+        return 0;
+    }
+    const double load_t0 = now_sec();
+    FILE *fp = fmemopen((void *)bp, bn, "rb");
+    if (!fp) {
+        wmbt_kv_release_borrow(borrow);
+        return 0;
+    }
+    uint32_t text_bytes = 0;
+    kv_entry hdr = {0};
+    int loaded = 0;
+    char *cached_text = NULL;
+    char err[160] = {0};
+    const char *fail_reason = "invalid header";
+    bool header_ok = kv_read_header(fp, &hdr, &text_bytes);
+    if (header_ok) {
+        if ((uint64_t)text_bytes > prompt_bytes) {
+            header_ok = false;
+            fail_reason = "cached text longer than prompt";
+        } else {
+            cached_text = xmalloc((size_t)text_bytes + 1);
+            if (fread(cached_text, 1, text_bytes, fp) != text_bytes) {
+                header_ok = false;
+                fail_reason = "truncated cached text";
+            } else {
+                cached_text[text_bytes] = '\0';
+                char text_sha[41];
+                sha1_bytes_hex(cached_text, text_bytes, text_sha);
+                if (strcmp(text_sha, prompt_sha)) {
+                    header_ok = false;
+                    fail_reason = "cached text hash mismatch";
+                } else if (!byte_prefix_match(prompt_text, prompt_bytes,
+                                              cached_text, text_bytes)) {
+                    header_ok = false;
+                    fail_reason = "cached text prefix mismatch";
+                }
+            }
+        }
+    }
+    if (header_ok &&
+        ds4_session_load_payload(s->session, fp, hdr.payload_bytes,
+                                 err, sizeof(err)) == 0) {
+        const ds4_tokens *loaded_tokens = ds4_session_tokens(s->session);
+        if (loaded_tokens && loaded_tokens->len == (int)hdr.tokens) {
+            loaded = (int)hdr.tokens;
+            if (effective_prompt) {
+                build_prompt_from_exact_prefix_and_text_suffix(
+                    s->engine, loaded_tokens, prompt_text + text_bytes,
+                    effective_prompt);
+            }
+            if (hdr.ext_flags & KV_EXT_TOOL_MAP) {
+                kv_tool_map_load_from_pos(s, fp, NULL);
+            }
+        } else {
+            ds4_session_invalidate(s->session);
+            fprintf(stderr,
+                    "ds4-server: WombatKV direct-load discarded corrupt payload "
+                    "sha=%s expected_tokens=%d got=%d\n",
+                    prompt_sha, (int)hdr.tokens,
+                    loaded_tokens ? loaded_tokens->len : -1);
+        }
+    } else if (!header_ok) {
+        fprintf(stderr,
+                "ds4-server: WombatKV direct-load rejected sha=%s: %s\n",
+                prompt_sha, fail_reason);
+    } else {
+        ds4_session_invalidate(s->session);
+        fprintf(stderr,
+                "ds4-server: WombatKV direct-load payload error sha=%s: %s\n",
+                prompt_sha, err);
+    }
+    fclose(fp);
+    wmbt_kv_release_borrow(borrow);
+    free(cached_text);
+    if (loaded > 0) {
+        const double load_ms = (now_sec() - load_t0) * 1000.0;
+        fprintf(stderr,
+                "ds4-server: WombatKV direct-load hit tokens=%d text=%u quant=%u "
+                "load=%.1f ms sha=%s (no disk round-trip)\n",
+                loaded, text_bytes, hdr.quant_bits, load_ms, prompt_sha);
+        if (loaded_path_out) {
+            char hint[64];
+            snprintf(hint, sizeof(hint), "wmbt_kv-direct:%s", prompt_sha);
+            *loaded_path_out = xstrdup(hint);
+        }
+    }
+    return loaded;
+}
+#endif /* DS4_WOMBATKV */
+
 static int kv_cache_try_load_text(server *s, const char *prompt_text,
                                   ds4_tokens *effective_prompt,
                                   char **loaded_path_out,
@@ -9474,8 +10028,82 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const int quant_bits = ds4_engine_routed_quant_bits(s->engine);
     if (quant_bits != 2 && quant_bits != 4) return 0;
     const size_t prompt_bytes = strlen(prompt_text);
+
+#ifdef DS4_WOMBATKV
+    /* Phase 3 Path X: WombatKV is authoritative. Walk its key list,
+     * find the longest text-prefix that matches `prompt_text`, and load
+     * straight from the borrowed bytes via fmemopen. No local search,
+     * no probe-and-materialise. */
+    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+        uint32_t hit_bytes = 0;
+        char hit_sha[41] = {0};
+        int found = wmbt_kv_find_longest_text_prefix(prompt_text, prompt_bytes,
+                                                  quant_bits, &hit_bytes,
+                                                  hit_sha);
+        if (found > 0) {
+            return wmbt_kv_load_text_prefix_from_wombatkv(
+                s, prompt_text, prompt_bytes, hit_bytes, hit_sha,
+                quant_bits, effective_prompt, loaded_path_out);
+        }
+        return 0;
+    }
+#endif
+
     int idx = kv_cache_find_text_prefix(kc, prompt_text, quant_bits,
                                         ds4_session_ctx(s->session));
+#ifdef DS4_WOMBATKV
+    /* Hook B — RFC 0005 §3.1: on local-cache miss, probe WombatKV.
+     *
+     * Two paths:
+     *   1. Foyer-direct: fmemopen the borrowed bytes from WombatKV
+     *      and load straight into the session — no disk round-trip
+     *      at all. This is the path local-cache hits inside the same
+     *      ds4 process want (sub-µs lookup) and what beats the
+     *      ds4-native disk-text load.
+     *   2. Materialise fallback: write the bytes into --kv-disk-dir
+     *      and re-run the local search. Used when the direct load
+     *      path rejected the bytes (header mismatch, etc.) so the
+     *      operator can still inspect / recover.
+     *
+     * Switch via DS4_WOMBATKV_DIRECT=0 (default ON). The earlier
+     * "decode regression on macOS" claim that motivated disabling
+     * this path was based on noisy single-trial measurements taken
+     * with a heavily contended concurrent stack (Docker + MinIO +
+     * sidecar + ds4 + IDE all competing). Byte-identity has since
+     * been verified — the bytes returned by wmbt_kv_get_kv_borrowed are
+     * byte-identical to the .kv ds4 wrote on disk (cmp confirms),
+     * and on a calm system the direct path loads in ~1-4 ms vs the
+     * disk path's 8-30 ms. The 20-25% decode rate gap observed on
+     * one trial was within noise of other cold-vs-warm measurements.
+     * The fmemopen path is the production default; the materialise
+     * fallback is retained as a safety net when direct-load rejects
+     * the bytes (header mismatch, etc.). */
+    if (idx < 0 && g_wmbt_kv_handle) {
+        const char *direct_env = getenv("DS4_WOMBATKV_DIRECT");
+        bool try_direct = !(direct_env && direct_env[0] == '0');
+        if (try_direct) {
+            int direct_loaded = wmbt_kv_try_load_direct(
+                s, prompt_text, prompt_bytes, quant_bits,
+                effective_prompt, loaded_path_out);
+            if (direct_loaded > 0) return direct_loaded;
+        }
+        /* Fall back to materialise — useful when caller wants the
+         * file on disk for inspection or when direct-load rejected
+         * the bytes (header mismatch, etc.). */
+        char prompt_sha[41];
+        sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+        char *probe_path = kv_path_for_sha(kc, prompt_sha);
+        if (probe_path) {
+            if (wmbt_kv_probe_and_materialise(prompt_text, prompt_bytes,
+                                           quant_bits, probe_path)) {
+                kv_cache_refresh(kc);
+                idx = kv_cache_find_text_prefix(kc, prompt_text, quant_bits,
+                                                ds4_session_ctx(s->session));
+            }
+            free(probe_path);
+        }
+    }
+#endif
     if (idx < 0) return 0;
 
     kv_entry e = kc->entry[idx];
@@ -12063,6 +12691,9 @@ int main(int argc, char **argv) {
     }
     g_listen_fd = lfd;
     server_log(DS4_LOG_DEFAULT, "ds4-server: listening on http://%s:%d", cfg.host, cfg.port);
+#ifdef DS4_WOMBATKV
+    wmbt_kv_init_hooks();
+#endif
 
     while (!g_stop_requested) {
         int fd = accept(lfd, NULL, NULL);
@@ -12118,6 +12749,9 @@ int main(int argc, char **argv) {
                    tokens->len);
         kv_cache_store_current(&s, "shutdown");
     }
+#ifdef DS4_WOMBATKV
+    wmbt_kv_shutdown_hooks();
+#endif
     server_close_resources(&s);
     return 0;
 }

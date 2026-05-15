@@ -11,6 +11,24 @@ CFLAGS ?= -O3 -ffast-math $(NATIVE_CPU_FLAG) -Wall -Wextra -std=c99
 OBJCFLAGS ?= -O3 -ffast-math $(NATIVE_CPU_FLAG) -Wall -Wextra -fobjc-arc
 
 LDLIBS ?= -lm -pthread
+
+# Optional WombatKV in-tree hooks (RFC 0005 Phase 2).
+# Set WOMBATKV=1 plus WOMBATKV_DIR=<path to wombatkv
+# checkout> to compile ds4-server against libwombatkv.dylib.
+# At runtime, set DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
+# to activate. Without either gate the build/runtime is a strict no-op
+# vs the vanilla path.
+WOMBATKV ?= 0
+WOMBATKV_DIR ?=
+ifeq ($(WOMBATKV),1)
+ifeq ($(strip $(WOMBATKV_DIR)),)
+$(error WOMBATKV=1 requires WOMBATKV_DIR=<path to wombatkv checkout>)
+endif
+WOMBATKV_INC := $(WOMBATKV_DIR)/crates/wombatkv-cabi/include
+WOMBATKV_LIB := $(WOMBATKV_DIR)/target/release
+CFLAGS  += -DDS4_WOMBATKV -I$(WOMBATKV_INC)
+LDLIBS  += -L$(WOMBATKV_LIB) -lwombatkv -Wl,-rpath,$(WOMBATKV_LIB)
+endif
 METAL_SRCS := $(wildcard metal/*.metal)
 
 ifeq ($(UNAME_S),Darwin)

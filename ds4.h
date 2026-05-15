@@ -252,8 +252,12 @@ typedef struct ds4_block_handle {
  *     and compressor frontier state are intentionally omitted: load
  *     regenerates raw KV via prefill, and block_tokens%128==0 guarantees
  *     the frontier is empty at the boundary.
- *   - Graph backend (Metal / CUDA): NOT YET IMPLEMENTED — returns -1 with
- *     an informative error.
+ *   - Graph backend (Metal / CUDA): IMPLEMENTED. Same wire format as the
+ *     CPU path — bytes saved on either backend can be loaded on either
+ *     backend. Bounds rule: only compressed rows that the engine has
+ *     already committed (g->layer_n_comp[il]) can be saved; a block range
+ *     that lands inside the raw-only frontier is rejected with an
+ *     informative error.
  *
  * Returns 0 on success; -1 on error with err populated.
  */
@@ -274,9 +278,23 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  *
  * Returns 0 on success; -1 on error with err populated.
  *
- * NOTE (skeleton): same as save_block — returns -1 until implementation
- * lands. Reserved in the public ABI so engines / WombatKV bindings can
- * compile against this surface today.
+ * Implementation status:
+ *   - CPU + Graph backend: IMPLEMENTED. Installs per-layer compressed K/V
+ *     (and indexer K/V for ratio-4 layers) into the live cache. Raw KV is
+ *     not preserved by the block format — the load leaves n_raw at zero
+ *     and relies on the next ds4_session_sync() to prefill suffix tokens
+ *     (which also re-emits the SWA ring).
+ *   - Token IDs are NOT carried in the block payload. After load_blocks
+ *     returns, ds4_session_tokens(s)->v[] is a placeholder filled with
+ *     zeros sized to the total token count. Callers (ds4_server /
+ *     WombatKV bindings) own the real token IDs out-of-band and are
+ *     responsible for either (a) overlaying the real token IDs onto the
+ *     placeholder vector before ds4_session_sync() if they want
+ *     common-prefix short-circuit behaviour, or (b) accepting that
+ *     ds4_session_sync() will treat the loaded prefix as a non-match and
+ *     refill from scratch.
+ *   - Partial-prefix install is not yet supported; the first block must
+ *     start at token 0 and blocks must be contiguous.
  */
 int ds4_session_load_blocks(ds4_session *s,
                             const ds4_block_handle *blocks, size_t block_count,

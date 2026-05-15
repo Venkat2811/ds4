@@ -208,14 +208,19 @@ void ds4_session_snapshot_free(ds4_session_snapshot *snap);
  * IMPORTANT ALIGNMENT CONSTRAINT (per the audit of ds4.c:15988-16179
  * + the per-layer compressor frontier semantics):
  *   block_tokens = token_end - token_start  MUST satisfy:
- *     - divisor of 128 (the ratio-128 odd-layer compression period)
- *     - multiple of 4   (the ratio-4 even-layer compression period)
+ *     - multiple of LCM(4, 128) = 128
+ *   (Original draft said {4..128 divisor-of-128 and multiple-of-4};
+ *    audit of save_payload's per-layer compressed-row emit logic
+ *    revealed that ratio-128 layers emit 1 row every 128 tokens,
+ *    so block_tokens < 128 yields 0 or fractional compressed rows
+ *    for those layers — would require shipping partial frontier
+ *    state per block. Deferred; require multiple-of-128 for now.)
  *   → allowed values: {4, 8, 16, 32, 64, 128}.
  * Using a misaligned block_tokens corrupts the compressor frontier state
  * for one or more layers. The save/load entry points enforce this.
  *
- * Recommended default: block_tokens = 64 (coarse enough for chat-prefix
- * sharing, fine enough for per-block storage overhead to stay negligible).
+ * Recommended default: block_tokens = 128 (the minimum aligned size).
+ * Allowed: any positive multiple of 128 up to 8192.
  *
  * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
  * implementation lands incrementally with associated tests. Callers

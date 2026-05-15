@@ -16527,14 +16527,23 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  * external integration crates can compile against the surface today.
  * ============================================================================ */
 
-/* Internal: validate block_tokens is in {4,8,16,32,64,128}. */
+/* Internal: validate block_tokens.
+ *
+ * Stronger constraint than the original RFC 0007 draft: block_tokens
+ * must be a multiple of LCM(4, 128) = 128 so each block contains an
+ * INTEGER number of compressed rows for every layer (ratio-4 + ratio-
+ * 128). A weaker form (block_tokens ∈ {4..64}) would require shipping
+ * partial compressor frontier state in each block; deferred.
+ *
+ * Allowed values: 128, 256, 384, 512, ... — any positive multiple of
+ * 128 up to some sane upper bound (we cap at 8192 to avoid pathological
+ * block sizes).
+ */
 static int kvblock_validate_block_tokens(int block_tokens) {
-    return (block_tokens == 4   ||
-            block_tokens == 8   ||
-            block_tokens == 16  ||
-            block_tokens == 32  ||
-            block_tokens == 64  ||
-            block_tokens == 128) ? 0 : -1;
+    if (block_tokens <= 0) return -1;
+    if (block_tokens > 8192) return -1;
+    if (block_tokens % 128 != 0) return -1;
+    return 0;
 }
 
 int ds4_session_block_layout(ds4_session *s,
@@ -16590,7 +16599,7 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
     const int block_tokens = token_end - token_start;
     if (kvblock_validate_block_tokens(block_tokens) != 0) {
         payload_set_err(err, errlen,
-            "ds4_session_save_block: block_tokens must be in {4,8,16,32,64,128}");
+            "ds4_session_save_block: block_tokens must be a positive multiple of 128 (<=8192)");
         return -1;
     }
     if (token_start % block_tokens != 0) {
@@ -16641,7 +16650,7 @@ int ds4_session_load_blocks(ds4_session *s,
         const int bt = b->token_end - b->token_start;
         if (kvblock_validate_block_tokens(bt) != 0) {
             payload_set_err(err, errlen,
-                "ds4_session_load_blocks: bad block_tokens (must be {4..128 allowed})");
+                "ds4_session_load_blocks: bad block_tokens (must be positive multiple of 128)");
             return -1;
         }
         if (i == 0) block_tokens = bt;

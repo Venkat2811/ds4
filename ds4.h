@@ -237,18 +237,25 @@ typedef struct ds4_block_handle {
 } ds4_block_handle;
 
 /* Save the KV state for exactly one block (tokens [token_start, token_end))
- * into `fp` in the per-block body format (see RFC 0007 §3.2 / 5.4).
+ * into `fp` in the per-block body format (see RFC 0007 §3.2 / 5.4 and the
+ * inline wire-format documentation at `kvblock_save_block_cpu` in ds4.c).
  *
  * Preconditions:
- *   - (token_end - token_start) must be in {4, 8, 16, 32, 64, 128}
+ *   - (token_end - token_start) must be a positive multiple of 128 (<=8192)
  *   - token_start must be aligned to (token_end - token_start)
  *   - token_end must be <= ds4_session_tokens(s)->len
+ *   - The session must have a valid checkpoint (a sync()/eval() has run)
+ *
+ * Implementation status:
+ *   - CPU backend: IMPLEMENTED. Writes per-layer compressed K/V (and indexer
+ *     K/V for ratio-4 layers) scoped to [token_start, token_end). Raw K/V
+ *     and compressor frontier state are intentionally omitted: load
+ *     regenerates raw KV via prefill, and block_tokens%128==0 guarantees
+ *     the frontier is empty at the boundary.
+ *   - Graph backend (Metal / CUDA): NOT YET IMPLEMENTED — returns -1 with
+ *     an informative error.
  *
  * Returns 0 on success; -1 on error with err populated.
- *
- * NOTE (skeleton): returns -1 with err = "ds4 Tier B not implemented yet"
- * until the per-layer slicing lands. Header is in place so callers can
- * be linked against the future ABI.
  */
 int ds4_session_save_block(ds4_session *s, FILE *fp,
                            int token_start, int token_end,
@@ -303,5 +310,13 @@ int ds4_session_block_layout(ds4_session *s,
  * Returns the ratio or -1 on error.
  */
 int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx);
+
+/* Validate a block_tokens value against the DS4 alignment rule
+ * (positive, <= 8192, multiple of 128). Exposed so WombatKV and tests
+ * can probe the rule without constructing a session.
+ *
+ * Returns 0 if valid; -1 otherwise.
+ */
+int ds4_kvblock_validate_block_tokens(int block_tokens);
 
 #endif

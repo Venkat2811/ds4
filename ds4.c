@@ -16656,19 +16656,44 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 }
 
 /* ============================================================================
- * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1) — SKELETON
+ * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
  *
- * Public API declared in ds4.h. These skeletons:
- *   - Validate block_tokens alignment so callers fail fast on bad config
- *   - Return ds4_session_block_layout / compression_ratio honestly using
- *     the existing engine state (those are read-only and don't need full
- *     Tier B impl to be useful)
- *   - Return -1 with "Tier B not implemented" from save_block /
- *     load_blocks until the per-layer slicing lands.
+ * Public API declared in ds4.h. The CPU save path is implemented; load /
+ * Metal paths remain skeletons. The wire format is documented inline at
+ * `kvblock_save_block_cpu` below.
  *
- * The ABI is now reserved so WombatKV bindings, ds4-cabi, and any
- * external integration crates can compile against the surface today.
+ * The ABI is reserved so WombatKV bindings, ds4-cabi, and any external
+ * integration crates can compile against the surface today.
  * ============================================================================ */
+
+/* Per-block wire-format constants. The on-disk block is a tiny self-
+ * describing record so a caller (WombatKV) can parse it without consulting
+ * a sibling metadata table for fundamentals like ratio counts. We deliberately
+ * keep it human-decodable from a hexdump.
+ *
+ * Layout:
+ *   header (24 B):
+ *     u32 magic = 0x3142564B  ("KVB1" little-endian)
+ *     u32 version = 1
+ *     u32 block_seq          (sequence in the chain; informational)
+ *     u32 token_count        (= token_end - token_start, multiple of 128)
+ *     u32 n_layers           (must equal DS4_N_LAYER)
+ *     u32 reserved           (zero for now)
+ *   per-layer body (for il = 0..n_layers-1):
+ *     u32 ratio              (0 / 4 / 128)
+ *     if ratio != 0:
+ *       u32 comp_rows        (= token_count / ratio)
+ *       comp_rows × DS4_N_HEAD_DIM × sizeof(float) bytes  // compressed K/V
+ *     if ratio == 4:
+ *       u32 index_rows       (= token_count / 4)
+ *       index_rows × DS4_N_INDEXER_HEAD_DIM × sizeof(float) bytes
+ *   trailer (4 B):
+ *     u32 crc32              (over body bytes after header; zero for v1)
+ */
+#define DS4_KVBLOCK_MAGIC    0x3142564Bu   /* 'K','V','B','1' little-endian */
+#define DS4_KVBLOCK_VERSION  1u
+#define DS4_KVBLOCK_HEADER_BYTES   24u
+#define DS4_KVBLOCK_TRAILER_BYTES  4u
 
 /* Internal: validate block_tokens.
  *
@@ -16687,6 +16712,10 @@ static int kvblock_validate_block_tokens(int block_tokens) {
     if (block_tokens > 8192) return -1;
     if (block_tokens % 128 != 0) return -1;
     return 0;
+}
+
+int ds4_kvblock_validate_block_tokens(int block_tokens) {
+    return kvblock_validate_block_tokens(block_tokens);
 }
 
 int ds4_session_block_layout(ds4_session *s,
@@ -16728,6 +16757,97 @@ int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx) {
     return (layer_idx % 2 == 0) ? 4 : 128;
 }
 
+/* Internal: write the CPU path of save_block. Caller already validated
+ * arg shapes (alignment, range). On success returns 0; on failure -1
+ * with err populated.
+ *
+ * Why no raw KV: load_blocks regenerates the raw SWA ring by replaying
+ * the suffix tokens through prefill. The compressed K/V (and indexer K/V
+ * for ratio-4 layers) is the part that's expensive to recompute and
+ * that's what blocks preserve.
+ *
+ * Why no compressor frontier state: block_tokens % 128 == 0 ⇒ at the
+ * boundary the compressor window is closed for every layer, so there's
+ * no half-filled frontier to ship. We assert this invariant below and
+ * fail loud if it ever isn't true.
+ */
+static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
+                                  int token_start, int token_end,
+                                  char *err, size_t errlen) {
+    const uint32_t block_tokens = (uint32_t)(token_end - token_start);
+    const uint32_t block_seq    = (uint32_t)token_start / block_tokens;
+
+    /* Header. */
+    if (payload_write_u32(fp, DS4_KVBLOCK_MAGIC,   err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_VERSION, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_seq,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_tokens,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_N_LAYER,         err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u /*reserved*/,     err, errlen) != 0) return -1;
+
+    /* Per-layer body. Mirror save_payload's per-layer loop scoped to
+     * [token_start, token_end). For ratio=0 layers we emit only the
+     * ratio u32 (no slabs — load regenerates raw KV by prefill). */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (payload_write_u32(fp, ratio, err, errlen) != 0) return -1;
+        if (ratio == 0) continue;
+
+        /* Compressed K/V slice. Compressed rows are append-only from
+         * row zero; row index = token_index / ratio. block_tokens is a
+         * multiple of 128 ⇒ multiple of every ratio in use, so both
+         * comp_row_start and comp_row_count are exact integers. */
+        const uint32_t comp_row_start = (uint32_t)token_start / ratio;
+        const uint32_t comp_row_count = block_tokens / ratio;
+        const uint32_t comp_row_end   = comp_row_start + comp_row_count;
+        if (comp_row_end > layer->n_comp) {
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                "ds4_session_save_block: layer %u comp range [%u,%u) exceeds n_comp=%u "
+                "(compressor frontier not closed at block boundary — block_tokens=%u)",
+                il, comp_row_start, comp_row_end, layer->n_comp, block_tokens);
+            payload_set_err(err, errlen, msg);
+            return -1;
+        }
+        if (payload_write_u32(fp, comp_row_count, err, errlen) != 0) return -1;
+        if (payload_write_bytes(fp,
+                                layer->attn_comp_kv +
+                                    (uint64_t)comp_row_start * DS4_N_HEAD_DIM,
+                                (uint64_t)comp_row_count * DS4_N_HEAD_DIM * sizeof(float),
+                                err, errlen) != 0) return -1;
+
+        if (ratio == 4) {
+            /* Indexer K/V slice. n_index_comp tracks the same ratio-4
+             * cadence as n_comp, so the same row range applies. */
+            const uint32_t index_row_start = comp_row_start;
+            const uint32_t index_row_count = comp_row_count;
+            const uint32_t index_row_end   = index_row_start + index_row_count;
+            if (index_row_end > layer->n_index_comp) {
+                char msg[160];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_save_block: layer %u indexer range [%u,%u) "
+                    "exceeds n_index_comp=%u",
+                    il, index_row_start, index_row_end, layer->n_index_comp);
+                payload_set_err(err, errlen, msg);
+                return -1;
+            }
+            if (payload_write_u32(fp, index_row_count, err, errlen) != 0) return -1;
+            if (payload_write_bytes(fp,
+                                    layer->index_comp_kv +
+                                        (uint64_t)index_row_start * DS4_N_INDEXER_HEAD_DIM,
+                                    (uint64_t)index_row_count * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                                    err, errlen) != 0) return -1;
+        }
+    }
+
+    /* Trailer: CRC32 placeholder. Zero for v1 — we rely on the outer
+     * envelope (WombatKV's storage backend) for integrity. If we ever
+     * want self-checking blocks we bump version and fill this in. */
+    if (payload_write_u32(fp, 0u /*crc32*/, err, errlen) != 0) return -1;
+    return 0;
+}
+
 int ds4_session_save_block(ds4_session *s, FILE *fp,
                            int token_start, int token_end,
                            char *err, size_t errlen) {
@@ -16750,17 +16870,26 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
             "ds4_session_save_block: token_start must align to block_tokens");
         return -1;
     }
+    if (!s->checkpoint_valid) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: session has no valid checkpoint");
+        return -1;
+    }
     const ds4_tokens *toks = ds4_session_tokens(s);
     if (!toks || token_end > toks->len) {
         payload_set_err(err, errlen,
             "ds4_session_save_block: token_end exceeds session token count");
         return -1;
     }
-    /* TODO(RFC 0007 §5.3 impl): per-layer slice of raw + compressed K/V.
-     * Returning -1 with informative err for now so callers can detect
-     * unimplemented state and fall back to ds4_session_save_payload. */
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_save_block_cpu(s, fp, token_start, token_end, err, errlen);
+    }
+    /* Metal / CUDA path lands separately (RFC 0007 §10 P4). The GPU
+     * graph caches live in tensor objects; we need a synchronize +
+     * span-read variant similar to ds4_session_save_payload's GPU
+     * branch but scoped to comp_row_start..comp_row_end per layer. */
     payload_set_err(err, errlen,
-        "ds4_session_save_block: Tier B per-layer slicing not yet implemented");
+        "ds4_session_save_block: graph backend save_block not yet implemented (CPU only)");
     return -1;
 }
 

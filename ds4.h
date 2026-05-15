@@ -191,4 +191,106 @@ int ds4_session_save_snapshot(ds4_session *s, ds4_session_snapshot *snap, char *
 int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, char *err, size_t errlen);
 void ds4_session_snapshot_free(ds4_session_snapshot *snap);
 
+/* ============================================================================
+ * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ * ----------------------------------------------------------------------------
+ * Slice the session's KV state by token range. Used by WombatKV to store
+ * content-addressed token-aligned blocks on object storage, enabling
+ * prefix sharing across prompts that share token prefixes (the vLLM /
+ * SGLang / Dynamo block-cache pattern).
+ *
+ * IMPORTANT ALIGNMENT CONSTRAINT (per the audit of ds4.c:15988-16179
+ * + the per-layer compressor frontier semantics):
+ *   block_tokens = token_end - token_start  MUST satisfy:
+ *     - divisor of 128 (the ratio-128 odd-layer compression period)
+ *     - multiple of 4   (the ratio-4 even-layer compression period)
+ *   → allowed values: {4, 8, 16, 32, 64, 128}.
+ * Using a misaligned block_tokens corrupts the compressor frontier state
+ * for one or more layers. The save/load entry points enforce this.
+ *
+ * Recommended default: block_tokens = 64 (coarse enough for chat-prefix
+ * sharing, fine enough for per-block storage overhead to stay negligible).
+ *
+ * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
+ * implementation lands incrementally with associated tests. Callers
+ * should defer hard production reliance on them until Tier B is marked
+ * stable in the WombatKV CHANGELOG.
+ * ============================================================================ */
+
+/* One block in a load batch. token_end is exclusive. */
+typedef struct ds4_block_handle {
+    int    token_start;     /* inclusive; aligned to block_tokens */
+    int    token_end;       /* exclusive; aligned to block_tokens */
+    FILE  *fp;              /* points to start of block body (after envelope header if any) */
+    size_t payload_bytes;   /* exact body bytes for this block */
+} ds4_block_handle;
+
+/* Save the KV state for exactly one block (tokens [token_start, token_end))
+ * into `fp` in the per-block body format (see RFC 0007 §3.2 / 5.4).
+ *
+ * Preconditions:
+ *   - (token_end - token_start) must be in {4, 8, 16, 32, 64, 128}
+ *   - token_start must be aligned to (token_end - token_start)
+ *   - token_end must be <= ds4_session_tokens(s)->len
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ *
+ * NOTE (skeleton): returns -1 with err = "ds4 Tier B not implemented yet"
+ * until the per-layer slicing lands. Header is in place so callers can
+ * be linked against the future ABI.
+ */
+int ds4_session_save_block(ds4_session *s, FILE *fp,
+                           int token_start, int token_end,
+                           char *err, size_t errlen);
+
+/* Install N consecutive blocks into the session, starting at token 0.
+ * After successful return, ds4_session_tokens(s)->len reflects the sum
+ * of token ranges covered by the blocks (must be contiguous, ascending,
+ * starting at 0; gaps not allowed). Subsequent ds4_session_sync()
+ * correctly prefills any suffix tokens beyond the loaded range.
+ *
+ * Preconditions:
+ *   - blocks[i].token_start = i == 0 ? 0 : blocks[i-1].token_end
+ *   - blocks[i].token_end - blocks[i].token_start ∈ {4..128 allowed set}
+ *   - All blocks share the same block_tokens granularity (no mixed mode)
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ *
+ * NOTE (skeleton): same as save_block — returns -1 until implementation
+ * lands. Reserved in the public ABI so engines / WombatKV bindings can
+ * compile against this surface today.
+ */
+int ds4_session_load_blocks(ds4_session *s,
+                            const ds4_block_handle *blocks, size_t block_count,
+                            char *err, size_t errlen);
+
+/* Report the per-layer byte stride per token. Used by WombatKV to plan
+ * block payload sizes and to validate block-payload byte lengths against
+ * the engine's layout.
+ *
+ *   *out_n_layers          = number of layers (e.g., 43 for DSV4)
+ *   *out_raw_bytes_per_tok = K+V bytes for one token in the raw KV ring,
+ *                            across all layers (e.g., 43 * 2048 = 88 KB)
+ *   *out_indexer_bytes_per_tok = same but for indexer KV (ratio-4 layers
+ *                                only contribute; e.g., 22 * 512 = 11 KB)
+ *
+ * The compressed-KV stride depends on per-layer ratio so this fn cannot
+ * give a single number for it; see ds4_session_layer_compression_ratio.
+ *
+ * Returns 0 on success; -1 on error.
+ */
+int ds4_session_block_layout(ds4_session *s,
+                             int *out_n_layers,
+                             size_t *out_raw_bytes_per_tok,
+                             size_t *out_indexer_bytes_per_tok,
+                             char *err, size_t errlen);
+
+/* Compression ratio for layer `layer_idx` (0 = no compression / raw only,
+ * 4 = ratio-4 attention with indexer KV, 128 = ratio-128 attention).
+ * Used by WombatKV when alignment checks need per-layer information.
+ *
+ * Returns the ratio or -1 on error.
+ */
+int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx);
+
 #endif

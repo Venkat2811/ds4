@@ -125,6 +125,23 @@ static void wmbt_kv_init_hooks(void) {
                 "is missing or shorter than 24 hex chars; refusing to start\n");
         exit(2);
     }
+    /* Tier B requires an up-to-date metadata index to engage on the FIRST
+     * request after a process restart. The bench discovered that without
+     * an explicit bootstrap, wmbt_kv_lookup_block_prefix returns matched=0
+     * for chains that exist in S3 from a prior session, since the in-process
+     * metadata_index starts empty. The Handle::from_env path in the C ABI
+     * honours WMBT_KV_BOOTSTRAP_WORLD=1 to run bootstrap_world_knowledge
+     * on the configured namespace at init time. Imply that gate from
+     * WMBT_KV_TIER_B=1 unless the caller has set it explicitly (=0 to
+     * opt out, =1 to leave behaviour unchanged). */
+    const char *tier_b_probe = getenv("WMBT_KV_TIER_B");
+    if (tier_b_probe && tier_b_probe[0] == '1' &&
+        getenv("WMBT_KV_BOOTSTRAP_WORLD") == NULL) {
+        setenv("WMBT_KV_BOOTSTRAP_WORLD", "1", 1);
+        fprintf(stderr,
+                "ds4-server: WMBT_KV_TIER_B=1 implies bootstrap; "
+                "setting WMBT_KV_BOOTSTRAP_WORLD=1\n");
+    }
     g_wmbt_kv_handle = wmbt_kv_init_from_env();
     if (!g_wmbt_kv_handle) {
         const char *err = wmbt_kv_last_error();

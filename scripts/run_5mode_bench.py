@@ -187,7 +187,7 @@ for mode_name, mode_overlay, _ in MODES:
             if restart_between_turns:
                 # both turns each get a fresh process
                 wipe(kvdisk)
-                # for WKV modes also wipe the puffer (forces S3-only)
+                # for WombatKV modes also wipe the puffer (forces S3-only)
                 if mode_overlay.get('DS4_WOMBATKV_ENABLE'):
                     wipe(puffer)
             t1_log = LOGS / f'{mode_name}_{cell_name}_trial{trial:02d}_turn1.log'

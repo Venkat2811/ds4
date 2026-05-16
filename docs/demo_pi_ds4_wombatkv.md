@@ -67,34 +67,34 @@ the file if it does not exist yet):
 That's the entire override. Pi will now spawn your binary instead of the
 default one, inheriting environment from the shell that runs `pi`.
 
-## Step 4 — Export six WombatKV env vars, then run `pi`
+## Step 4 — Export one WombatKV env var, then run `pi`
 
 In whatever shell you run `pi` from (or in `~/.zshrc` / `~/.bashrc`):
 
 ```bash
-# 1) Master switch — flips ds4 to use WombatKV for KV save/restore
+# Required — flips ds4 to use WombatKV for KV save/restore
 export DS4_WOMBATKV_ENABLE=1
-
-# 2) S3 endpoint for the WombatKV substrate
-export WMBT_KV_S3_ENDPOINT=http://127.0.0.1:9200
-
-# 3) S3 credentials
-export WMBT_KV_S3_ACCESS_KEY=minioadmin
-export WMBT_KV_S3_SECRET_KEY=minioadmin
-
-# 4) Bucket the team shares — pick any name, all teammates use the same one
-export WMBT_KV_BUCKET=wombatkv-team-shared
-
-# 5) Local puffer directory — fast tier between S3 and ds4
-export WMBT_KV_PUFFER_DIR=$HOME/.wombatkv/puffer
-
-# 6) Namespace — keeps different models / dtypes apart in the same bucket
-export WMBT_KV_NAMESPACE=ds4-metal
 ```
 
-After the defaults flip in a later alpha, several of these are expected to
-become optional (endpoint, namespace, puffer-dir will gain sensible
-defaults). The six above are the minimal set today.
+For the team-shared bucket scenario described in this doc, also point
+WombatKV at the MinIO endpoint and bucket name your team agreed on:
+
+```bash
+export WMBT_KV_S3_ENDPOINT=http://127.0.0.1:9200   # if not on the default 9000
+export WMBT_KV_BUCKET=wombatkv-team-shared          # bucket the team shares
+```
+
+Everything else auto-resolves from sane defaults:
+
+- **Credentials** fall back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`,
+  then to the local-dev defaults (`minioadmin`). `WMBT_KV_S3_ACCESS_KEY` /
+  `WMBT_KV_S3_SECRET_KEY` still win when set.
+- **Bucket** defaults to `wombatkv-cache-${USER}` if you don't set
+  `WMBT_KV_BUCKET` — the bucket name is logged at startup so you can pin it.
+- **Model fingerprint** auto-derives from `sha1(model_path)[:24]` if you
+  don't set `DS4_WMBT_KV_FINGERPRINT24`.
+- **Local puffer directory**, **namespace**, **compression** (zstd default),
+  **prefetch** (30 s default), and the block cache itself are all default-on.
 
 Now run a normal Pi session:
 

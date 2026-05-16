@@ -226,6 +226,15 @@ void ds4_session_snapshot_free(ds4_session_snapshot *snap);
  * implementation lands incrementally with associated tests. Callers
  * should defer hard production reliance on them until Tier B is marked
  * stable in the WombatKV CHANGELOG.
+ *
+ * Server-side env-var precedence (consumed by ds4_server, not the libds4 API):
+ *   WMBT_KV_TIER_B=1            opt in to the block-chain load/store path.
+ *   WMBT_KV_BOOTSTRAP_WORLD=1   re-index S3 manifests at handle init so
+ *                               Tier B can engage on the FIRST request
+ *                               after a process restart.
+ *   WMBT_KV_TIER_B=1 implicitly enables WMBT_KV_BOOTSTRAP_WORLD=1 unless
+ *   the user has set it explicitly (e.g. =0 to opt out of the implicit
+ *   bootstrap when they know the in-process index is already warm).
  * ============================================================================ */
 
 /* One block in a load batch. token_end is exclusive. */

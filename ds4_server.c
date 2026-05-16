@@ -10235,6 +10235,66 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const size_t prompt_bytes = strlen(prompt_text);
 
 #ifdef DS4_WOMBATKV
+    /* Tier A first probe (RFC 0008): when both Tier A monolithic
+     * (g_wmbt_kv_replace_local) and Tier B block-chain (g_wmbt_kv_tier_b)
+     * are enabled, probe Tier A's exact-prompt key BEFORE Tier B's chain
+     * compute + lookup. Rationale:
+     *
+     *   Tier A exact-key hit installs the full saved KV in ~80 ms (one
+     *   GET + fmemopen + ds4_session_load_payload — zero prefill).
+     *
+     *   Tier B hit, even on a full-chain match, costs ~1.5 s because
+     *   ds4_session_load_blocks rebuilds only the per-token cache
+     *   structure; ds4 then re-prefills every loaded token to warm the
+     *   compute graph (~125 t/s on Mac M3 ≈ 1 s per 128-token block on a
+     *   small prompt, much more for longer ones).
+     *
+     * So when the user hits the SAME prompt across restarts (e.g. demo
+     * replay, regression suite, identical chat-turn warmup), Tier A's
+     * exact-key probe wins on the same-prompt case. On miss (different
+     * prompt or partial-prefix share), we fall through to the existing
+     * Tier B chain compute, which still wins on the prefix-share case
+     * vs. cold prefill.
+     *
+     * When TIER_B is off, this block is a no-op and the original
+     * Tier-A-only path below at `if (g_wmbt_kv_replace_local && ...)`
+     * runs unchanged.
+     *
+     * When TIER_B is on but Tier A misses, we fall through to the
+     * existing Tier B block at `if (g_wmbt_kv_tier_b && ...)` so the
+     * Tier B prefix-share path is preserved. */
+    if (g_wmbt_kv_tier_b && g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+        const double t_enter = now_sec();
+        char prompt_sha[41];
+        sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
+        const double t_pre_exact = now_sec();
+        int rc_exact = wmbt_kv_load_text_prefix_from_wombatkv(
+            s, prompt_text, prompt_bytes, (uint32_t)prompt_bytes, prompt_sha,
+            quant_bits, effective_prompt, loaded_path_out);
+        const double t_post_exact = now_sec();
+        const double exact_ms = (t_post_exact - t_pre_exact) * 1000.0;
+        if (rc_exact > 0) {
+            const double t_exit = now_sec();
+            fprintf(stderr,
+                    "ds4-server: [wombatkv] Tier A exact-key hit, "
+                    "skipping Tier B (tokens=%d exact_ms=%.1f)\n",
+                    rc_exact, exact_ms);
+            fprintf(stderr,
+                    "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
+                    "\"path\":\"tier_a_first_hit\","
+                    "\"stages\":{\"entry_to_exit_ms\":%.2f,"
+                    "\"exact_probe_ms\":%.2f},\"loaded_tokens\":%d}\n",
+                    (t_exit - t_enter) * 1000.0, exact_ms, rc_exact);
+            return rc_exact;
+        }
+        fprintf(stderr,
+                "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
+                "\"path\":\"tier_a_first_miss\","
+                "\"stages\":{\"exact_probe_ms\":%.2f}}\n",
+                exact_ms);
+        /* Tier A miss → fall through to Tier B below. */
+    }
+
     /* Tier B (RFC 0007 §7): content-addressed block chain. The block-
      * shaped surfaces give cross-prompt prefix sharing because the hash
      * for block i depends only on (chain[i-1], tokens[i*N..(i+1)*N]) —

@@ -170,7 +170,7 @@ def run_mode(mode, outdir, trials):
     logs_dir = outdir / 'server_logs'
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    bucket = f'wkv-showcase-{mode.replace("_", "-")}-sharegpt'.lower()
+    bucket = f'wombatkv-showcase-{mode.replace("_", "-")}-sharegpt'.lower()
     lib.reset_minio_bucket(bucket)
 
     # Single-port scenario.

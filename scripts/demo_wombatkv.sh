@@ -33,7 +33,7 @@ start_server() {
   local mode="$1"   # native | wombatkv
   local logfile="$2"
   local kvdir=/tmp/demo-ds4-$mode
-  local puffer=/tmp/demo-wkv-$mode
+  local puffer=/tmp/demo-wombatkv-$mode
   rm -rf "$kvdir" "$puffer"; mkdir -p "$kvdir" "$puffer"
 
   local env_overrides=()
@@ -43,7 +43,7 @@ start_server() {
       DS4_WMBT_KV_FINGERPRINT24=deadbeefcafe1234567890ab
       WMBT_KV_TIMING=1
       WMBT_KV_S3_ENDPOINT=http://127.0.0.1:9200
-      WMBT_KV_BUCKET=wkv-demo-$mode
+      WMBT_KV_BUCKET=wombatkv-demo-$mode
       WMBT_KV_S3_ACCESS_KEY=minioadmin
       WMBT_KV_S3_SECRET_KEY=minioadmin
       WMBT_KV_PUFFER_DIR="$puffer"

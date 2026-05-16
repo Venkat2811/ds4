@@ -214,7 +214,7 @@ def run_mode(mode, outdir, trials):
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     snippets = _load_code_snippets()
-    bucket = f'wkv-showcase-{mode.replace("_", "-")}-pi-review'.lower()
+    bucket = f'wombatkv-showcase-{mode.replace("_", "-")}-pi-review'.lower()
     lib.reset_minio_bucket(bucket)
 
     # Single ds4 instance + single puffer/kvdisk pair — all 5 agents share via

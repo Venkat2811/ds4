@@ -127,22 +127,16 @@ static void wmbt_kv_init_hooks(void) {
                 "is missing or shorter than 24 hex chars; refusing to start\n");
         exit(2);
     }
-    /* Tier B requires an up-to-date metadata index to engage on the FIRST
-     * request after a process restart. The bench discovered that without
-     * an explicit bootstrap, wmbt_kv_lookup_block_prefix returns matched=0
-     * for chains that exist in S3 from a prior session, since the in-process
-     * metadata_index starts empty. The Handle::from_env path in the C ABI
-     * honours WMBT_KV_BOOTSTRAP_WORLD=1 to run bootstrap_world_knowledge
-     * on the configured namespace at init time. Imply that gate from
-     * WMBT_KV_TIER_B=1 unless the caller has set it explicitly (=0 to
-     * opt out, =1 to leave behaviour unchanged). */
+    /* Tier B is DEFAULT-ON in 0.1.0-alpha. Caller can opt out with
+     * WMBT_KV_TIER_B=0 (or any non-"1" value) — the alpha shipping
+     * shape is "the headline behavior is the default; one env var to
+     * disable, none to enable". Tier B implies bootstrap_world_knowledge
+     * for the cross-restart restore path; we propagate the gate here so
+     * downstream C ABI sees it. */
     const char *tier_b_probe = getenv("WMBT_KV_TIER_B");
-    if (tier_b_probe && tier_b_probe[0] == '1' &&
-        getenv("WMBT_KV_BOOTSTRAP_WORLD") == NULL) {
+    int tier_b_enabled = (tier_b_probe == NULL) || (tier_b_probe[0] == '1');
+    if (tier_b_enabled && getenv("WMBT_KV_BOOTSTRAP_WORLD") == NULL) {
         setenv("WMBT_KV_BOOTSTRAP_WORLD", "1", 1);
-        fprintf(stderr,
-                "ds4-server: WMBT_KV_TIER_B=1 implies bootstrap; "
-                "setting WMBT_KV_BOOTSTRAP_WORLD=1\n");
     }
     g_wmbt_kv_handle = wmbt_kv_init_from_env();
     if (!g_wmbt_kv_handle) {
@@ -157,17 +151,19 @@ static void wmbt_kv_init_hooks(void) {
     g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");
     g_wmbt_kv_fingerprint = xstrdup(fp);
     g_wmbt_kv_replace_local = 1;
-    /* Tier B (block-chain) opt-in. WMBT_KV_TIER_B=1 enables the
-     * block-shaped surfaces. WMBT_KV_TIER_B_BLOCK_TOKENS overrides the
-     * default block granularity (must be a positive multiple of 128). */
+    /* Tier B (block-chain) is DEFAULT-ON in 0.1.0-alpha. Caller can opt
+     * out with WMBT_KV_TIER_B=0. WMBT_KV_TIER_B_BLOCK_TOKENS overrides
+     * the default block granularity (must be a positive multiple of 128;
+     * default 128). */
     const char *tier_b_env = getenv("WMBT_KV_TIER_B");
-    if (tier_b_env && tier_b_env[0] == '1') {
+    int tier_b_active = (tier_b_env == NULL) || (tier_b_env[0] == '1');
+    if (tier_b_active) {
         const char *bt_env = getenv("WMBT_KV_TIER_B_BLOCK_TOKENS");
         int bt = bt_env ? atoi(bt_env) : 128;
         if (ds4_kvblock_validate_block_tokens(bt) != 0) {
             fprintf(stderr,
-                    "ds4-server: WMBT_KV_TIER_B=1 but WMBT_KV_TIER_B_BLOCK_TOKENS=%d "
-                    "is invalid (must be positive multiple of 128, <=8192). "
+                    "ds4-server: WMBT_KV_TIER_B_BLOCK_TOKENS=%d is invalid "
+                    "(must be positive multiple of 128, <=8192). "
                     "Refusing to start.\n", bt);
             exit(2);
         }

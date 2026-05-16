@@ -13,3 +13,5 @@
 /misc/
 .*.swp
 .DS_Store
+.claude/
+ds4-server.g*

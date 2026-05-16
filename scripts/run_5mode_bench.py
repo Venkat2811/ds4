@@ -165,9 +165,9 @@ results = []  # list of dicts per (mode, cell)
 for mode_name, mode_overlay, _ in MODES:
     for cell_name, restart_between_turns, (p1, p2) in CELLS:
         log(f'=== {mode_name} / {cell_name}  same={p1==p2} restart={restart_between_turns} ===')
-        puffer = f'/tmp/wkv-5way-{mode_name}-{cell_name}'
+        puffer = f'/tmp/wombatkv-5way-{mode_name}-{cell_name}'
         kvdisk = f'/tmp/ds4-5way-{mode_name}-{cell_name}'
-        bucket = f'wkv-5way-{mode_name}-{cell_name}'.lower().replace('_', '-')
+        bucket = f'wombatkv-5way-{mode_name}-{cell_name}'.lower().replace('_', '-')
         wipe(puffer, kvdisk)
 
         env = env_for(mode_overlay, puffer, bucket)

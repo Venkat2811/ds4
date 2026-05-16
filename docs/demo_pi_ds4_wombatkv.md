@@ -85,7 +85,7 @@ export WMBT_KV_S3_SECRET_KEY=minioadmin
 # 4) Bucket the team shares — pick any name, all teammates use the same one
 export WMBT_KV_BUCKET=wombatkv-team-shared
 
-# 5) Local foyer directory (puffer) — fast tier between S3 and ds4
+# 5) Local puffer directory — fast tier between S3 and ds4
 export WMBT_KV_PUFFER_DIR=$HOME/.wombatkv/puffer
 
 # 6) Namespace — keeps different models / dtypes apart in the same bucket

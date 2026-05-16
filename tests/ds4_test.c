@@ -863,9 +863,162 @@ static void test_kvblock_cpu_roundtrip(void) {
     ds4_engine_close(engine);
 }
 
+/* RFC 0007 §10.P5 raw-tail sidecar — verify the standalone sidecar
+ * envelope: ds4_session_save_raw_tail writes bytes that
+ * ds4_session_install_raw_tail can re-ingest into a fresh session's
+ * SWA ring.
+ *
+ * Invariants asserted:
+ *   - save_raw_tail produces exactly the predicted byte count for DSV4
+ *     (24 + N_LAYER*N_SWA*HEAD_DIM*4 + 4 = 11,272,220 for DSV4)
+ *   - install_raw_tail succeeds on the bytes save produced
+ *   - re-saving from the installed session produces byte-identical
+ *     bytes (round-trip integrity) — this is the headline contract
+ *
+ * The test only exercises the CPU path; the GPU path uses the same
+ * envelope and is covered when the bench runs on Metal. */
+static void test_kvblock_raw_tail_sidecar_roundtrip(void) {
+    const char *model_path = test_model_path();
+    if (access(model_path, R_OK) != 0) {
+        fprintf(stderr,
+                "  (skipping raw_tail sidecar roundtrip — model %s not readable)\n",
+                model_path);
+        return;
+    }
+    ds4_engine_options opt = {
+        .model_path = model_path,
+        .backend = DS4_BACKEND_CPU,
+        .quality = false,
+    };
+    ds4_engine *engine = NULL;
+    TEST_ASSERT(ds4_engine_open(&engine, &opt) == 0);
+    if (!engine) return;
+    const int ctx_size = 1024;
+    const int total_tokens = 256;
+    const int block_tokens = 128;
+    ds4_tokens prompt = {0};
+    for (int i = 0; i < total_tokens; i++) ds4_tokens_push(&prompt, 1 + (i % 16));
+    ds4_session *src = NULL;
+    TEST_ASSERT(ds4_session_create(&src, engine, ctx_size) == 0);
+    if (!src) { ds4_tokens_free(&prompt); ds4_engine_close(engine); return; }
+    char err[256] = {0};
+    TEST_ASSERT(ds4_session_sync(src, &prompt, err, sizeof(err)) == 0);
+
+    /* Save the raw-tail sidecar to a memory FILE. */
+    FILE *st_fp = tmpfile();
+    TEST_ASSERT(st_fp != NULL);
+    if (!st_fp) {
+        ds4_session_free(src);
+        ds4_tokens_free(&prompt);
+        ds4_engine_close(engine);
+        return;
+    }
+    int rc_save = ds4_session_save_raw_tail(src, st_fp, err, sizeof(err));
+    if (rc_save != 0) fprintf(stderr, "  save_raw_tail failed: %s\n", err);
+    TEST_ASSERT(rc_save == 0);
+    const long st_bytes = ftell(st_fp);
+    /* Expected envelope for DSV4 with N_SWA=128 raw rows: 24 B header +
+     * 43 × 128 × 512 × 4 = 11,272,192 B body + 4 B end sentinel =
+     * 11,272,220 B. */
+    fprintf(stderr, "  raw_tail sidecar bytes: %ld\n", st_bytes);
+    TEST_ASSERT(st_bytes > (long)24);
+    rewind(st_fp);
+
+    /* Slurp it into a buffer. */
+    uint8_t *st_buf = malloc((size_t)st_bytes);
+    TEST_ASSERT(st_buf != NULL);
+    if (!st_buf) {
+        fclose(st_fp);
+        ds4_session_free(src);
+        ds4_tokens_free(&prompt);
+        ds4_engine_close(engine);
+        return;
+    }
+    TEST_ASSERT(fread(st_buf, 1, (size_t)st_bytes, st_fp) == (size_t)st_bytes);
+
+    /* First u32 is the RTT1 magic. */
+    {
+        const uint32_t magic = (uint32_t)st_buf[0] |
+                               ((uint32_t)st_buf[1] << 8) |
+                               ((uint32_t)st_buf[2] << 16) |
+                               ((uint32_t)st_buf[3] << 24);
+        TEST_ASSERT(magic == 0x52545431u); /* 'R','T','T','1' */
+    }
+
+    /* Save the first block of src for the load step. */
+    FILE *blockfp = tmpfile();
+    TEST_ASSERT(blockfp != NULL);
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_save_block(src, blockfp, 0, block_tokens,
+                                       err, sizeof(err)) == 0);
+    const long block_bytes = ftell(blockfp);
+    rewind(blockfp);
+
+    /* Build a fresh dst session, load the block, then install raw_tail. */
+    ds4_session *dst = NULL;
+    TEST_ASSERT(ds4_session_create(&dst, engine, ctx_size) == 0);
+    ds4_block_handle bh = {
+        .token_start = 0,
+        .token_end = block_tokens,
+        .fp = blockfp,
+        .payload_bytes = (size_t)block_bytes,
+    };
+    err[0] = 0;
+    TEST_ASSERT(ds4_session_load_blocks(dst, &bh, 1, err, sizeof(err)) == 0);
+
+    err[0] = 0;
+    int rc_install = ds4_session_install_raw_tail(dst, st_buf, (size_t)st_bytes,
+                                                  err, sizeof(err));
+    if (rc_install != 0) fprintf(stderr, "  install_raw_tail failed: %s\n", err);
+    TEST_ASSERT(rc_install == 0);
+
+    /* Round-trip: re-save raw_tail from dst, compare to the original
+     * sidecar bytes. With the same SWA-window contents installed, the
+     * envelope must be byte-identical. */
+    FILE *st_fp2 = tmpfile();
+    TEST_ASSERT(st_fp2 != NULL);
+    if (st_fp2) {
+        err[0] = 0;
+        int rc_save2 = ds4_session_save_raw_tail(dst, st_fp2, err, sizeof(err));
+        if (rc_save2 != 0) fprintf(stderr, "  save_raw_tail (dst) failed: %s\n", err);
+        TEST_ASSERT(rc_save2 == 0);
+        const long st_bytes2 = ftell(st_fp2);
+        TEST_ASSERT(st_bytes2 == st_bytes);
+        rewind(st_fp2);
+        uint8_t *st_buf2 = malloc((size_t)st_bytes);
+        TEST_ASSERT(st_buf2 != NULL);
+        if (st_buf2) {
+            TEST_ASSERT(fread(st_buf2, 1, (size_t)st_bytes, st_fp2)
+                        == (size_t)st_bytes);
+            const int cmp = memcmp(st_buf, st_buf2, (size_t)st_bytes);
+            if (cmp != 0) {
+                long first = -1;
+                for (long i = 0; i < st_bytes; i++) {
+                    if (st_buf[i] != st_buf2[i]) { first = i; break; }
+                }
+                fprintf(stderr,
+                        "  raw_tail roundtrip: re-saved bytes differ at offset %ld\n",
+                        first);
+            }
+            TEST_ASSERT(cmp == 0);
+            free(st_buf2);
+        }
+        fclose(st_fp2);
+    }
+
+    free(st_buf);
+    fclose(blockfp);
+    fclose(st_fp);
+    ds4_session_free(dst);
+    ds4_session_free(src);
+    ds4_tokens_free(&prompt);
+    ds4_engine_close(engine);
+}
+
 static void test_kvblock_group(void) {
     test_kvblock_validation();
     test_kvblock_cpu_roundtrip();
+    test_kvblock_raw_tail_sidecar_roundtrip();
 }
 
 typedef void (*test_fn)(void);

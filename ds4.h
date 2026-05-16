@@ -268,6 +268,54 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
                            int token_start, int token_end,
                            char *err, size_t errlen);
 
+/* RFC 0007 §10.P5 raw-tail sidecar — save the session's SWA-window raw
+ * KV to a memory FILE* as a standalone sidecar payload. The block chain
+ * is independent — this is meant to be uploaded under
+ * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` by the caller (typically
+ * ds4_server) right after a successful wmbt_kv_put_kv_blocks() call.
+ *
+ * The on-disk envelope is the RTT1 layout documented at
+ * DS4_KVBLOCK_RAW_TAIL_MAGIC in ds4.c:
+ *   24 B header (magic, version, n_layers, n_raw_rows, head_dim,
+ *                bytes_per_elem)
+ *   n_layers × n_raw_rows × head_dim × bytes_per_elem bytes of raw KV
+ *   4 B end sentinel
+ *
+ * For DSV4 with n_raw_rows=DS4_N_SWA=128: 11,272,220 bytes total.
+ *
+ * Preconditions: the session has a valid checkpoint (saw at least one
+ * prefill since creation/invalidate). The SWA ring is read from the
+ * CPU/Metal layer caches in the current backend.
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ */
+int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              char *err, size_t errlen);
+
+/* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the
+ * session's SWA ring from a sidecar payload (the inverse of
+ * ds4_session_save_raw_tail). Used by ds4_server after a Tier B
+ * load_blocks() succeeded, when the matching sidecar GET also hit.
+ *
+ * After successful install, the session's CPU/Metal raw KV cache holds
+ * authoritative SWA-window state for the trailing `n_raw_rows` tokens;
+ * the downstream `ds4_session_sync()` short-circuits its suffix
+ * re-prefill.
+ *
+ * IMPORTANT: this MUST be called AFTER `ds4_session_load_blocks` has
+ * populated the engine for the matched-prefix length, because the GPU
+ * path uses ds4_session_tokens(s)->len to compute where in the SWA ring
+ * to write (phys = pos % raw_cap).
+ *
+ * Returns 0 on success; -1 on error with err populated (bad envelope,
+ * layout mismatch, capacity overflow). On error the session's SWA ring
+ * may be in a partially-installed state — callers should
+ * ds4_session_invalidate() and fall back to a cold prefill in that case.
+ */
+int ds4_session_install_raw_tail(ds4_session *s,
+                                 const uint8_t *bytes, size_t len,
+                                 char *err, size_t errlen);
+
 /* Install N consecutive blocks into the session, starting at token 0.
  * After successful return, ds4_session_tokens(s)->len reflects the sum
  * of token ranges covered by the blocks (must be contiguous, ascending,

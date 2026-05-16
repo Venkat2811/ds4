@@ -16552,6 +16552,38 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 #define DS4_KVBLOCK_HEADER_BYTES   24u
 #define DS4_KVBLOCK_TRAILER_BYTES  4u
 
+/* RFC 0007 §10.P5 raw-tail sidecar wire format (independent object stored
+ * under `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hex>` by ds4_server). The
+ * block chain payload (KVB1) is unchanged.
+ *
+ * Raw-tail wire layout:
+ *   u32 magic            = DS4_KVBLOCK_RAW_TAIL_MAGIC ('RTT1')
+ *   u32 version          = DS4_KVBLOCK_RAW_TAIL_VERSION (1)
+ *   u32 n_layers         = DS4_N_LAYER (= 43 for DSV4)
+ *   u32 n_raw_rows       = number of valid raw rows captured (<= DS4_N_SWA)
+ *   u32 head_dim         = DS4_N_HEAD_DIM (= 512)
+ *   u32 bytes_per_elem   = sizeof(float) (= 4) — fixed for now
+ *   for il in 0..n_layers:
+ *     n_raw_rows × head_dim × bytes_per_elem bytes of raw KV (linear,
+ *     oldest-row-first; producer linearizes from the SWA ring before
+ *     writing)
+ *   u32 end_magic        = DS4_KVBLOCK_RAW_TAIL_END ('RTTE')
+ *
+ * For DSV4 with n_raw_rows=128:
+ *   24 envelope + 43 × 128 × 512 × 4 + 4 = 11,272,220 bytes (~10.8 MB).
+ *
+ * Producers call ds4_session_save_raw_tail(s, fp, ...) to write the
+ * envelope to a memory FILE*; ds4_server then PUTs the bytes via
+ * wmbt_kv_put_raw_tail keyed by chain-tip hash. Consumers call
+ * ds4_session_install_raw_tail(s, bytes, len, ...) after a Tier B
+ * load_blocks succeeded; on success n_raw is populated and the next
+ * session_sync() can short-circuit the SWA-window re-prefill.
+ */
+#define DS4_KVBLOCK_RAW_TAIL_MAGIC        0x52545431u   /* 'R','T','T','1' little-endian */
+#define DS4_KVBLOCK_RAW_TAIL_END          0x52545445u   /* 'R','T','T','E' little-endian */
+#define DS4_KVBLOCK_RAW_TAIL_VERSION      1u
+#define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 24u
+
 /* Internal: validate block_tokens.
  *
  * Stronger constraint than the original RFC 0007 draft: block_tokens
@@ -16839,6 +16871,301 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
     return -1;
 #else
     return kvblock_save_block_gpu(s, fp, token_start, token_end, err, errlen);
+#endif
+}
+
+/* RFC 0007 §10.P5 raw-tail sidecar — CPU save. Linearizes the SWA-window
+ * raw KV from the contiguous cpu_cache.layer[il].raw_kv buffer (which is
+ * already in oldest-first order within [n_raw - raw_live, n_raw)) into a
+ * RAW_TAIL envelope. raw_live = min(checkpoint.len, DS4_N_SWA). */
+static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
+                                     char *err, size_t errlen) {
+    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    uint32_t raw_live = DS4_N_SWA;
+    if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+
+    if (raw_live > 0) {
+        for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+            const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+            if (raw_live > layer->n_raw) {
+                payload_set_err(err, errlen,
+                    "ds4_session_save_raw_tail: raw_live > layer->n_raw (cpu)");
+                return -1;
+            }
+            const uint32_t raw_start = layer->n_raw - raw_live;
+            if (payload_write_bytes(fp,
+                                    layer->raw_kv + (uint64_t)raw_start * DS4_N_HEAD_DIM,
+                                    (uint64_t)raw_live * DS4_N_HEAD_DIM * sizeof(float),
+                                    err, errlen) != 0) return -1;
+        }
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    return 0;
+}
+
+#ifndef DS4_NO_GPU
+/* RFC 0007 §10.P5 raw-tail sidecar — GPU/Metal save. Reads from the
+ * Metal raw-cache tensors row-by-row at the physical SWA-ring offset
+ * (phys = pos % raw_cap) so the on-disk byte order is logical
+ * oldest-first regardless of the ring's wrap state. */
+static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
+                                     char *err, size_t errlen) {
+    const ds4_gpu_graph *g = &s->graph;
+    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    uint32_t raw_live = g->raw_window ? g->raw_window : DS4_N_SWA;
+    if (raw_live > g->raw_cap) raw_live = g->raw_cap;
+    if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+
+    if (raw_live > 0) {
+        uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+        int rc = 0;
+        for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+            const uint32_t raw_first = checkpoint_len - raw_live;
+            for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
+                const uint32_t pos  = raw_first + r;
+                const uint32_t phys = pos % g->raw_cap;
+                rc = payload_write_tensor_span(fp,
+                                               g->layer_raw_cache[il],
+                                               (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                               (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                               buf, DS4_SESSION_IO_CHUNK,
+                                               err, errlen);
+            }
+        }
+        free(buf);
+        if (rc != 0) return -1;
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    return 0;
+}
+#endif
+
+int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              char *err, size_t errlen) {
+    if (!s || !fp) {
+        payload_set_err(err, errlen, "ds4_session_save_raw_tail: null arg");
+        return -1;
+    }
+    if (!s->checkpoint_valid) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: session has no valid checkpoint");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_save_raw_tail_cpu(s, fp, err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_save_raw_tail: graph backend support is not compiled in");
+    return -1;
+#else
+    if (ds4_gpu_synchronize() == 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: failed to synchronize Metal before save");
+        return -1;
+    }
+    return kvblock_save_raw_tail_gpu(s, fp, err, errlen);
+#endif
+}
+
+/* RFC 0007 §10.P5 raw-tail sidecar — install raw bytes from a buffer
+ * into the session's SWA ring. Used by ds4_server after a successful
+ * Tier B load_blocks + sidecar GET to skip the post-load re-prefill of
+ * the last DS4_N_SWA tokens.
+ *
+ * Returns 0 on successful install, -1 on parse/layout/capacity error.
+ * Caller is responsible for matching this to a load_blocks that
+ * populated total_tokens — we use ds4_session_tokens(s)->len as the
+ * canonical "total tokens" count post-load. */
+static int kvblock_install_raw_tail_cpu(ds4_session *s,
+                                        const uint8_t *bytes, size_t len,
+                                        char *err, size_t errlen) {
+    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: payload too small for envelope");
+        return -1;
+    }
+    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    if (!fp) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: fmemopen failed");
+        return -1;
+    }
+    uint64_t remaining = (uint64_t)len;
+    uint32_t magic = 0;
+    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
+        || n_layers != (uint32_t)DS4_N_LAYER
+        || head_dim != (uint32_t)DS4_N_HEAD_DIM
+        || bytes_per_elem != (uint32_t)sizeof(float)) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: layout mismatch");
+        return -1;
+    }
+    if (n_raw_rows > DS4_N_SWA) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > SWA window");
+        return -1;
+    }
+    const uint64_t per_layer_bytes =
+        (uint64_t)n_raw_rows * head_dim * bytes_per_elem;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        if (n_raw_rows > layer->cap_raw) {
+            fclose(fp);
+            payload_set_err(err, errlen,
+                "ds4_session_install_raw_tail: n_raw_rows > cpu cap_raw");
+            return -1;
+        }
+        if (payload_read_bytes(fp, layer->raw_kv, per_layer_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        layer->n_raw = n_raw_rows;
+    }
+    uint32_t end_magic = 0;
+    if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    fclose(fp);
+    if (end_magic != DS4_KVBLOCK_RAW_TAIL_END) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: missing end sentinel");
+        return -1;
+    }
+    return 0;
+}
+
+#ifndef DS4_NO_GPU
+static int kvblock_install_raw_tail_gpu(ds4_session *s,
+                                        const uint8_t *bytes, size_t len,
+                                        uint32_t total_tokens,
+                                        char *err, size_t errlen) {
+    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: payload too small for envelope");
+        return -1;
+    }
+    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    if (!fp) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: fmemopen failed");
+        return -1;
+    }
+    uint64_t remaining = (uint64_t)len;
+    uint32_t magic = 0;
+    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
+        || n_layers != (uint32_t)DS4_N_LAYER
+        || head_dim != (uint32_t)DS4_N_HEAD_DIM
+        || bytes_per_elem != (uint32_t)sizeof(float)) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: layout mismatch (gpu)");
+        return -1;
+    }
+    if (n_raw_rows > DS4_N_SWA) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > SWA window (gpu)");
+        return -1;
+    }
+    ds4_gpu_graph *g = &s->graph;
+    if (n_raw_rows > total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > total_tokens (gpu)");
+        return -1;
+    }
+    if (n_raw_rows > g->raw_cap) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > graph raw_cap");
+        return -1;
+    }
+    const uint32_t raw_first = total_tokens - n_raw_rows;
+    uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+    int rc = 0;
+    for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+        for (uint32_t r = 0; rc == 0 && r < n_raw_rows; r++) {
+            const uint32_t pos  = raw_first + r;
+            const uint32_t phys = pos % g->raw_cap;
+            rc = payload_read_tensor_span(fp,
+                                          g->layer_raw_cache[il],
+                                          (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                          (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+        }
+    }
+    free(buf);
+    if (rc != 0) { fclose(fp); return -1; }
+    uint32_t end_magic = 0;
+    if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    fclose(fp);
+    if (end_magic != DS4_KVBLOCK_RAW_TAIL_END) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: missing end sentinel (gpu)");
+        return -1;
+    }
+    return 0;
+}
+#endif
+
+int ds4_session_install_raw_tail(ds4_session *s,
+                                 const uint8_t *bytes, size_t len,
+                                 char *err, size_t errlen) {
+    if (!s || !bytes || len == 0) {
+        payload_set_err(err, errlen, "ds4_session_install_raw_tail: null arg");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_install_raw_tail_cpu(s, bytes, len, err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_install_raw_tail: graph backend support is not compiled in");
+    return -1;
+#else
+    const ds4_tokens *toks = ds4_session_tokens(s);
+    const uint32_t total_tokens = toks ? (uint32_t)toks->len : 0;
+    return kvblock_install_raw_tail_gpu(s, bytes, len, total_tokens, err, errlen);
 #endif
 }
 

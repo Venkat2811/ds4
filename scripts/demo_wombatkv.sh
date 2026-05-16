@@ -38,23 +38,16 @@ start_server() {
 
   local env_overrides=()
   if [ "$mode" = "wombatkv" ]; then
+    # 0.1.0-alpha minimum surface: enable + non-default endpoint/bucket/puffer
+    # for demo isolation. Everything else (fingerprint, credentials,
+    # compression, prefetch, Tier B, namespace, bootstrap) auto-resolves
+    # via WombatKV defaults + AWS-standard env fallback.
     env_overrides=(
       DS4_WOMBATKV_ENABLE=1
-      DS4_WMBT_KV_FINGERPRINT24=deadbeefcafe1234567890ab
-      WMBT_KV_TIMING=1
       WMBT_KV_S3_ENDPOINT=http://127.0.0.1:9200
       WMBT_KV_BUCKET=wombatkv-demo-$mode
-      WMBT_KV_S3_ACCESS_KEY=minioadmin
-      WMBT_KV_S3_SECRET_KEY=minioadmin
       WMBT_KV_PUFFER_DIR="$puffer"
-      WMBT_KV_NAMESPACE=ds4-metal
-      WMBT_KV_EMBEDDED_ASYNC_S3=1
-      WMBT_KV_CHUNK_VERIFY=0
-      WMBT_KV_S3_PREWARM=8
-      WMBT_KV_CHUNK_BYTES=8388608
-      WMBT_KV_TIER_B=1
-      WMBT_KV_TIER_B_BLOCK_TOKENS=128
-      WMBT_KV_BOOTSTRAP_SLATEDB=1
+      WMBT_KV_TIMING=1
     )
   fi
 
@@ -121,7 +114,7 @@ echo "  Scenario: same prompt twice, restart between turns"
 echo "==============================================="
 
 run_demo native   "ds4-native (no WombatKV — local disk only)"
-run_demo wombatkv "ds4 + WombatKV (S3-backed substrate + G1 + sidecar + LRU + zstd)"
+run_demo wombatkv "ds4 + WombatKV (S3-backed substrate)"
 
 echo
 echo "==============================================="
@@ -129,10 +122,10 @@ echo "  Expected on M3 Max + native MinIO:"
 echo "    ds4-native turn 2: ~7000-9000 ms (cold prefill, no cross-restart KV)"
 echo "    ds4+WombatKV turn 2: ~50-150 ms (S3 hit, instant warm restore)"
 echo "    Speedup: 50-200x"
-echo "  WombatKV substrate stack:"
-echo "    - G1 Tier-A-first probe (exact-key fast path)"
-echo "    - G2 raw_tail sidecar (RFC 0007 §10.P5, skips re-prefill)"
-echo "    - SlateDB-backed world-knowledge index (M1.1)"
-echo "    - LRU eviction with per-namespace budget"
-echo "    - zstd block compression (opt-in via WMBT_KV_BLOCK_COMPRESS=zstd)"
+echo "  What WombatKV provides (defaults-on in 0.1.0-alpha):"
+echo "    - object-storage-native prefix-share blocks across processes"
+echo "    - warm-tail restore — skips re-prefill on cross-restart"
+echo "    - SlateDB-backed world-knowledge index"
+echo "    - zstd block compression"
+echo "    - background prefetch worker"
 echo "==============================================="

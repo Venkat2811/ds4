@@ -16655,6 +16655,1087 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 #endif
 }
 
+/* ============================================================================
+ * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ *
+ * Public API declared in ds4.h. The CPU save path is implemented; load /
+ * Metal paths remain skeletons. The wire format is documented inline at
+ * `kvblock_save_block_cpu` below.
+ *
+ * The ABI is reserved so WombatKV bindings, ds4-cabi, and any external
+ * integration crates can compile against the surface today.
+ * ============================================================================ */
+
+/* Per-block wire-format constants. The on-disk block is a tiny self-
+ * describing record so a caller (WombatKV) can parse it without consulting
+ * a sibling metadata table for fundamentals like ratio counts. We deliberately
+ * keep it human-decodable from a hexdump.
+ *
+ * Layout:
+ *   header (24 B):
+ *     u32 magic = 0x3142564B  ("KVB1" little-endian)
+ *     u32 version = 1
+ *     u32 block_seq          (sequence in the chain; informational)
+ *     u32 token_count        (= token_end - token_start, multiple of 128)
+ *     u32 n_layers           (must equal DS4_N_LAYER)
+ *     u32 reserved           (zero for now)
+ *   per-layer body (for il = 0..n_layers-1):
+ *     u32 ratio              (0 / 4 / 128)
+ *     if ratio != 0:
+ *       u32 comp_rows        (= token_count / ratio)
+ *       comp_rows × DS4_N_HEAD_DIM × sizeof(float) bytes  // compressed K/V
+ *     if ratio == 4:
+ *       u32 index_rows       (= token_count / 4)
+ *       index_rows × DS4_N_INDEXER_HEAD_DIM × sizeof(float) bytes
+ *   trailer (4 B):
+ *     u32 crc32              (over body bytes after header; zero for v1)
+ */
+#define DS4_KVBLOCK_MAGIC    0x3142564Bu   /* 'K','V','B','1' little-endian */
+#define DS4_KVBLOCK_VERSION  1u
+#define DS4_KVBLOCK_HEADER_BYTES   24u
+#define DS4_KVBLOCK_TRAILER_BYTES  4u
+
+/* RFC 0007 §10.P5 raw-tail sidecar wire format (independent object stored
+ * under `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hex>` by ds4_server). The
+ * block chain payload (KVB1) is unchanged.
+ *
+ * Raw-tail wire layout:
+ *   u32 magic            = DS4_KVBLOCK_RAW_TAIL_MAGIC ('RTT1')
+ *   u32 version          = DS4_KVBLOCK_RAW_TAIL_VERSION (1)
+ *   u32 n_layers         = DS4_N_LAYER (= 43 for DSV4)
+ *   u32 n_raw_rows       = number of valid raw rows captured (<= DS4_N_SWA)
+ *   u32 head_dim         = DS4_N_HEAD_DIM (= 512)
+ *   u32 bytes_per_elem   = sizeof(float) (= 4) — fixed for now
+ *   for il in 0..n_layers:
+ *     n_raw_rows × head_dim × bytes_per_elem bytes of raw KV (linear,
+ *     oldest-row-first; producer linearizes from the SWA ring before
+ *     writing)
+ *   u32 end_magic        = DS4_KVBLOCK_RAW_TAIL_END ('RTTE')
+ *
+ * For DSV4 with n_raw_rows=128:
+ *   24 envelope + 43 × 128 × 512 × 4 + 4 = 11,272,220 bytes (~10.8 MB).
+ *
+ * Producers call ds4_session_save_raw_tail(s, fp, ...) to write the
+ * envelope to a memory FILE*; ds4_server then PUTs the bytes via
+ * wmbt_kv_put_raw_tail keyed by chain-tip hash. Consumers call
+ * ds4_session_install_raw_tail(s, bytes, len, ...) after a Tier B
+ * load_blocks succeeded; on success n_raw is populated and the next
+ * session_sync() can short-circuit the SWA-window re-prefill.
+ */
+#define DS4_KVBLOCK_RAW_TAIL_MAGIC        0x52545431u   /* 'R','T','T','1' little-endian */
+#define DS4_KVBLOCK_RAW_TAIL_END          0x52545445u   /* 'R','T','T','E' little-endian */
+#define DS4_KVBLOCK_RAW_TAIL_VERSION      1u
+#define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 24u
+
+/* Internal: validate block_tokens.
+ *
+ * Stronger constraint than the original RFC 0007 draft: block_tokens
+ * must be a multiple of LCM(4, 128) = 128 so each block contains an
+ * INTEGER number of compressed rows for every layer (ratio-4 + ratio-
+ * 128). A weaker form (block_tokens ∈ {4..64}) would require shipping
+ * partial compressor frontier state in each block; deferred.
+ *
+ * Allowed values: 128, 256, 384, 512, ... — any positive multiple of
+ * 128 up to some sane upper bound (we cap at 8192 to avoid pathological
+ * block sizes).
+ */
+static int kvblock_validate_block_tokens(int block_tokens) {
+    if (block_tokens <= 0) return -1;
+    if (block_tokens > 8192) return -1;
+    if (block_tokens % 128 != 0) return -1;
+    return 0;
+}
+
+int ds4_kvblock_validate_block_tokens(int block_tokens) {
+    return kvblock_validate_block_tokens(block_tokens);
+}
+
+int ds4_session_block_layout(ds4_session *s,
+                             int *out_n_layers,
+                             size_t *out_raw_bytes_per_tok,
+                             size_t *out_indexer_bytes_per_tok,
+                             char *err, size_t errlen) {
+    if (!s) {
+        payload_set_err(err, errlen, "ds4_session_block_layout: null session");
+        return -1;
+    }
+    /* Raw KV: per layer, per token = DS4_N_HEAD_DIM * sizeof(float).
+     * Across all layers: DS4_N_LAYER * that. */
+    const size_t raw_per_layer_tok = (size_t)DS4_N_HEAD_DIM * sizeof(float);
+    /* Indexer KV exists only on ratio-4 (even) layers, contributes
+     * DS4_N_INDEXER_HEAD_DIM * sizeof(float) per row per ratio-4 layer.
+     * The ratio table is layer-local; the simplest summary is "per
+     * ratio-4 layer" — caller multiplies by the ratio-4-layer count. */
+    const size_t indexer_per_ratio4_layer_tok =
+        (size_t)DS4_N_INDEXER_HEAD_DIM * sizeof(float);
+
+    if (out_n_layers) *out_n_layers = DS4_N_LAYER;
+    if (out_raw_bytes_per_tok)
+        *out_raw_bytes_per_tok = (size_t)DS4_N_LAYER * raw_per_layer_tok;
+    if (out_indexer_bytes_per_tok)
+        *out_indexer_bytes_per_tok = indexer_per_ratio4_layer_tok;
+    return 0;
+}
+
+int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx) {
+    if (!s) return -1;
+    if (layer_idx < 0 || layer_idx >= DS4_N_LAYER) return -1;
+    /* Mirror the layer-table semantics from ds4.c §"Layer compression":
+     *   layers 0, 1: ratio 0 (raw only)
+     *   even layers (2..42): ratio 4
+     *   odd layers  (3..41): ratio 128
+     * See ds4.c:411-414 audit notes. */
+    if (layer_idx == 0 || layer_idx == 1) return 0;
+    return (layer_idx % 2 == 0) ? 4 : 128;
+}
+
+/* Internal: write the CPU path of save_block. Caller already validated
+ * arg shapes (alignment, range). On success returns 0; on failure -1
+ * with err populated.
+ *
+ * Why no raw KV: load_blocks regenerates the raw SWA ring by replaying
+ * the suffix tokens through prefill. The compressed K/V (and indexer K/V
+ * for ratio-4 layers) is the part that's expensive to recompute and
+ * that's what blocks preserve.
+ *
+ * Why no compressor frontier state: block_tokens % 128 == 0 ⇒ at the
+ * boundary the compressor window is closed for every layer, so there's
+ * no half-filled frontier to ship. We assert this invariant below and
+ * fail loud if it ever isn't true.
+ */
+static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
+                                  int token_start, int token_end,
+                                  char *err, size_t errlen) {
+    const uint32_t block_tokens = (uint32_t)(token_end - token_start);
+    const uint32_t block_seq    = (uint32_t)token_start / block_tokens;
+
+    /* Header. */
+    if (payload_write_u32(fp, DS4_KVBLOCK_MAGIC,   err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_VERSION, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_seq,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_tokens,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_N_LAYER,         err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u /*reserved*/,     err, errlen) != 0) return -1;
+
+    /* Per-layer body. Mirror save_payload's per-layer loop scoped to
+     * [token_start, token_end). For ratio=0 layers we emit only the
+     * ratio u32 (no slabs — load regenerates raw KV by prefill). */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (payload_write_u32(fp, ratio, err, errlen) != 0) return -1;
+        if (ratio == 0) continue;
+
+        /* Compressed K/V slice. Compressed rows are append-only from
+         * row zero; row index = token_index / ratio. block_tokens is a
+         * multiple of 128 ⇒ multiple of every ratio in use, so both
+         * comp_row_start and comp_row_count are exact integers. */
+        const uint32_t comp_row_start = (uint32_t)token_start / ratio;
+        const uint32_t comp_row_count = block_tokens / ratio;
+        const uint32_t comp_row_end   = comp_row_start + comp_row_count;
+        if (comp_row_end > layer->n_comp) {
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                "ds4_session_save_block: layer %u comp range [%u,%u) exceeds n_comp=%u "
+                "(compressor frontier not closed at block boundary — block_tokens=%u)",
+                il, comp_row_start, comp_row_end, layer->n_comp, block_tokens);
+            payload_set_err(err, errlen, msg);
+            return -1;
+        }
+        if (payload_write_u32(fp, comp_row_count, err, errlen) != 0) return -1;
+        if (payload_write_bytes(fp,
+                                layer->attn_comp_kv +
+                                    (uint64_t)comp_row_start * DS4_N_HEAD_DIM,
+                                (uint64_t)comp_row_count * DS4_N_HEAD_DIM * sizeof(float),
+                                err, errlen) != 0) return -1;
+
+        if (ratio == 4) {
+            /* Indexer K/V slice. n_index_comp tracks the same ratio-4
+             * cadence as n_comp, so the same row range applies. */
+            const uint32_t index_row_start = comp_row_start;
+            const uint32_t index_row_count = comp_row_count;
+            const uint32_t index_row_end   = index_row_start + index_row_count;
+            if (index_row_end > layer->n_index_comp) {
+                char msg[160];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_save_block: layer %u indexer range [%u,%u) "
+                    "exceeds n_index_comp=%u",
+                    il, index_row_start, index_row_end, layer->n_index_comp);
+                payload_set_err(err, errlen, msg);
+                return -1;
+            }
+            if (payload_write_u32(fp, index_row_count, err, errlen) != 0) return -1;
+            if (payload_write_bytes(fp,
+                                    layer->index_comp_kv +
+                                        (uint64_t)index_row_start * DS4_N_INDEXER_HEAD_DIM,
+                                    (uint64_t)index_row_count * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                                    err, errlen) != 0) return -1;
+        }
+    }
+
+    /* Trailer: CRC32 placeholder. Zero for v1 — we rely on the outer
+     * envelope (WombatKV's storage backend) for integrity. If we ever
+     * want self-checking blocks we bump version and fill this in. */
+    if (payload_write_u32(fp, 0u /*crc32*/, err, errlen) != 0) return -1;
+    return 0;
+}
+
+/* Internal: write the graph-backend path of save_block. Mirrors
+ * kvblock_save_block_cpu but reads from Metal tensors via
+ * payload_write_tensor_span. The on-disk byte layout is byte-identical to
+ * the CPU path (header + per-layer body + trailer) — that is the
+ * cross-backend interoperability contract documented at
+ * `kvblock_save_block_cpu` and in RFC 0007 §5.4.
+ *
+ * Bounds rule: we only emit compressed rows that the engine has already
+ * compressed (g->layer_n_comp[il]). Tokens that are still "raw-only" hot
+ * at save time are rejected with an informative error; supporting that
+ * case requires shipping partial frontier state per block (deferred). */
+#ifndef DS4_NO_GPU
+static int kvblock_save_block_gpu(ds4_session *s, FILE *fp,
+                                  int token_start, int token_end,
+                                  char *err, size_t errlen) {
+    if (ds4_gpu_synchronize() == 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: failed to synchronize Metal before block save");
+        return -1;
+    }
+    ds4_gpu_graph *g = &s->graph;
+    const uint32_t block_tokens = (uint32_t)(token_end - token_start);
+    const uint32_t block_seq    = (uint32_t)token_start / block_tokens;
+
+    /* Header — byte-identical to CPU path. */
+    if (payload_write_u32(fp, DS4_KVBLOCK_MAGIC,   err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_VERSION, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_seq,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, block_tokens,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_N_LAYER,         err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u /*reserved*/,     err, errlen) != 0) return -1;
+
+    uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+    int rc = 0;
+    for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = ds4_layer_compress_ratio(il);
+        if (payload_write_u32(fp, ratio, err, errlen) != 0) { rc = -1; break; }
+        if (ratio == 0) continue;
+
+        const uint32_t comp_row_start = (uint32_t)token_start / ratio;
+        const uint32_t comp_row_count = block_tokens / ratio;
+        const uint32_t comp_row_end   = comp_row_start + comp_row_count;
+        if (comp_row_end > g->layer_n_comp[il]) {
+            char msg[200];
+            snprintf(msg, sizeof(msg),
+                "ds4_session_save_block: layer %u comp range [%u,%u) exceeds "
+                "g->layer_n_comp=%u (compressor frontier not closed at block "
+                "boundary — block_tokens=%u). Raw-only-at-save-time blocks "
+                "are not supported yet.",
+                il, comp_row_start, comp_row_end, g->layer_n_comp[il], block_tokens);
+            payload_set_err(err, errlen, msg);
+            rc = -1; break;
+        }
+        if (payload_write_u32(fp, comp_row_count, err, errlen) != 0) { rc = -1; break; }
+        rc = payload_write_tensor_span(fp,
+                                       g->layer_attn_comp_cache[il],
+                                       (uint64_t)comp_row_start * DS4_N_HEAD_DIM * sizeof(float),
+                                       (uint64_t)comp_row_count * DS4_N_HEAD_DIM * sizeof(float),
+                                       buf, DS4_SESSION_IO_CHUNK, err, errlen);
+        if (rc != 0) { rc = -1; break; }
+
+        if (ratio == 4) {
+            const uint32_t index_row_start = comp_row_start;
+            const uint32_t index_row_count = comp_row_count;
+            const uint32_t index_row_end   = index_row_start + index_row_count;
+            if (index_row_end > g->layer_n_index_comp[il]) {
+                char msg[200];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_save_block: layer %u indexer range [%u,%u) "
+                    "exceeds g->layer_n_index_comp=%u",
+                    il, index_row_start, index_row_end, g->layer_n_index_comp[il]);
+                payload_set_err(err, errlen, msg);
+                rc = -1; break;
+            }
+            if (payload_write_u32(fp, index_row_count, err, errlen) != 0) { rc = -1; break; }
+            rc = payload_write_tensor_span(fp,
+                                           g->layer_index_comp_cache[il],
+                                           (uint64_t)index_row_start * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                                           (uint64_t)index_row_count * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                                           buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            if (rc != 0) { rc = -1; break; }
+        }
+    }
+    free(buf);
+    if (rc != 0) return -1;
+
+    /* Trailer — CRC32 placeholder (zero for v1, see CPU path comment). */
+    if (payload_write_u32(fp, 0u /*crc32*/, err, errlen) != 0) return -1;
+    return 0;
+}
+#endif
+
+int ds4_session_save_block(ds4_session *s, FILE *fp,
+                           int token_start, int token_end,
+                           char *err, size_t errlen) {
+    if (!s || !fp) {
+        payload_set_err(err, errlen, "ds4_session_save_block: null arg");
+        return -1;
+    }
+    if (token_end <= token_start) {
+        payload_set_err(err, errlen, "ds4_session_save_block: empty range");
+        return -1;
+    }
+    const int block_tokens = token_end - token_start;
+    if (kvblock_validate_block_tokens(block_tokens) != 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: block_tokens must be a positive multiple of 128 (<=8192)");
+        return -1;
+    }
+    if (token_start % block_tokens != 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: token_start must align to block_tokens");
+        return -1;
+    }
+    if (!s->checkpoint_valid) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: session has no valid checkpoint");
+        return -1;
+    }
+    const ds4_tokens *toks = ds4_session_tokens(s);
+    if (!toks || token_end > toks->len) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_block: token_end exceeds session token count");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_save_block_cpu(s, fp, token_start, token_end, err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_save_block: graph backend support is not compiled in");
+    return -1;
+#else
+    return kvblock_save_block_gpu(s, fp, token_start, token_end, err, errlen);
+#endif
+}
+
+/* RFC 0007 §10.P5 raw-tail sidecar — CPU save. Linearizes the SWA-window
+ * raw KV from the contiguous cpu_cache.layer[il].raw_kv buffer (which is
+ * already in oldest-first order within [n_raw - raw_live, n_raw)) into a
+ * RAW_TAIL envelope. raw_live = min(checkpoint.len, DS4_N_SWA). */
+static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
+                                     char *err, size_t errlen) {
+    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    uint32_t raw_live = DS4_N_SWA;
+    if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+
+    if (raw_live > 0) {
+        for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+            const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+            if (raw_live > layer->n_raw) {
+                payload_set_err(err, errlen,
+                    "ds4_session_save_raw_tail: raw_live > layer->n_raw (cpu)");
+                return -1;
+            }
+            const uint32_t raw_start = layer->n_raw - raw_live;
+            if (payload_write_bytes(fp,
+                                    layer->raw_kv + (uint64_t)raw_start * DS4_N_HEAD_DIM,
+                                    (uint64_t)raw_live * DS4_N_HEAD_DIM * sizeof(float),
+                                    err, errlen) != 0) return -1;
+        }
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    return 0;
+}
+
+#ifndef DS4_NO_GPU
+/* RFC 0007 §10.P5 raw-tail sidecar — GPU/Metal save. Reads from the
+ * Metal raw-cache tensors row-by-row at the physical SWA-ring offset
+ * (phys = pos % raw_cap) so the on-disk byte order is logical
+ * oldest-first regardless of the ring's wrap state. */
+static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
+                                     char *err, size_t errlen) {
+    const ds4_gpu_graph *g = &s->graph;
+    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    uint32_t raw_live = g->raw_window ? g->raw_window : DS4_N_SWA;
+    if (raw_live > g->raw_cap) raw_live = g->raw_cap;
+    if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+
+    if (raw_live > 0) {
+        uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+        int rc = 0;
+        for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+            const uint32_t raw_first = checkpoint_len - raw_live;
+            for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
+                const uint32_t pos  = raw_first + r;
+                const uint32_t phys = pos % g->raw_cap;
+                rc = payload_write_tensor_span(fp,
+                                               g->layer_raw_cache[il],
+                                               (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                               (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                               buf, DS4_SESSION_IO_CHUNK,
+                                               err, errlen);
+            }
+        }
+        free(buf);
+        if (rc != 0) return -1;
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    return 0;
+}
+#endif
+
+int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              char *err, size_t errlen) {
+    if (!s || !fp) {
+        payload_set_err(err, errlen, "ds4_session_save_raw_tail: null arg");
+        return -1;
+    }
+    if (!s->checkpoint_valid) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: session has no valid checkpoint");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_save_raw_tail_cpu(s, fp, err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_save_raw_tail: graph backend support is not compiled in");
+    return -1;
+#else
+    if (ds4_gpu_synchronize() == 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: failed to synchronize Metal before save");
+        return -1;
+    }
+    return kvblock_save_raw_tail_gpu(s, fp, err, errlen);
+#endif
+}
+
+/* RFC 0007 §10.P5 raw-tail sidecar — install raw bytes from a buffer
+ * into the session's SWA ring. Used by ds4_server after a successful
+ * Tier B load_blocks + sidecar GET to skip the post-load re-prefill of
+ * the last DS4_N_SWA tokens.
+ *
+ * Returns 0 on successful install, -1 on parse/layout/capacity error.
+ * Caller is responsible for matching this to a load_blocks that
+ * populated total_tokens — we use ds4_session_tokens(s)->len as the
+ * canonical "total tokens" count post-load. */
+static int kvblock_install_raw_tail_cpu(ds4_session *s,
+                                        const uint8_t *bytes, size_t len,
+                                        char *err, size_t errlen) {
+    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: payload too small for envelope");
+        return -1;
+    }
+    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    if (!fp) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: fmemopen failed");
+        return -1;
+    }
+    uint64_t remaining = (uint64_t)len;
+    uint32_t magic = 0;
+    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
+        || n_layers != (uint32_t)DS4_N_LAYER
+        || head_dim != (uint32_t)DS4_N_HEAD_DIM
+        || bytes_per_elem != (uint32_t)sizeof(float)) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: layout mismatch");
+        return -1;
+    }
+    if (n_raw_rows > DS4_N_SWA) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > SWA window");
+        return -1;
+    }
+    const uint64_t per_layer_bytes =
+        (uint64_t)n_raw_rows * head_dim * bytes_per_elem;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        if (n_raw_rows > layer->cap_raw) {
+            fclose(fp);
+            payload_set_err(err, errlen,
+                "ds4_session_install_raw_tail: n_raw_rows > cpu cap_raw");
+            return -1;
+        }
+        if (payload_read_bytes(fp, layer->raw_kv, per_layer_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        layer->n_raw = n_raw_rows;
+    }
+    uint32_t end_magic = 0;
+    if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    fclose(fp);
+    if (end_magic != DS4_KVBLOCK_RAW_TAIL_END) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: missing end sentinel");
+        return -1;
+    }
+    return 0;
+}
+
+#ifndef DS4_NO_GPU
+static int kvblock_install_raw_tail_gpu(ds4_session *s,
+                                        const uint8_t *bytes, size_t len,
+                                        uint32_t total_tokens,
+                                        char *err, size_t errlen) {
+    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: payload too small for envelope");
+        return -1;
+    }
+    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    if (!fp) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: fmemopen failed");
+        return -1;
+    }
+    uint64_t remaining = (uint64_t)len;
+    uint32_t magic = 0;
+    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
+        || n_layers != (uint32_t)DS4_N_LAYER
+        || head_dim != (uint32_t)DS4_N_HEAD_DIM
+        || bytes_per_elem != (uint32_t)sizeof(float)) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: layout mismatch (gpu)");
+        return -1;
+    }
+    if (n_raw_rows > DS4_N_SWA) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > SWA window (gpu)");
+        return -1;
+    }
+    ds4_gpu_graph *g = &s->graph;
+    if (n_raw_rows > total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > total_tokens (gpu)");
+        return -1;
+    }
+    if (n_raw_rows > g->raw_cap) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > graph raw_cap");
+        return -1;
+    }
+    const uint32_t raw_first = total_tokens - n_raw_rows;
+    uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+    int rc = 0;
+    for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+        for (uint32_t r = 0; rc == 0 && r < n_raw_rows; r++) {
+            const uint32_t pos  = raw_first + r;
+            const uint32_t phys = pos % g->raw_cap;
+            rc = payload_read_tensor_span(fp,
+                                          g->layer_raw_cache[il],
+                                          (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                          (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+        }
+    }
+    free(buf);
+    if (rc != 0) { fclose(fp); return -1; }
+    uint32_t end_magic = 0;
+    if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    fclose(fp);
+    if (end_magic != DS4_KVBLOCK_RAW_TAIL_END) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: missing end sentinel (gpu)");
+        return -1;
+    }
+    return 0;
+}
+#endif
+
+int ds4_session_install_raw_tail(ds4_session *s,
+                                 const uint8_t *bytes, size_t len,
+                                 char *err, size_t errlen) {
+    if (!s || !bytes || len == 0) {
+        payload_set_err(err, errlen, "ds4_session_install_raw_tail: null arg");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_install_raw_tail_cpu(s, bytes, len, err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_install_raw_tail: graph backend support is not compiled in");
+    return -1;
+#else
+    const ds4_tokens *toks = ds4_session_tokens(s);
+    const uint32_t total_tokens = toks ? (uint32_t)toks->len : 0;
+    return kvblock_install_raw_tail_gpu(s, bytes, len, total_tokens, err, errlen);
+#endif
+}
+
+/* Internal: read + verify one block header. On success returns the
+ * declared block_tokens via out_block_tokens; on failure -1 with err. */
+static int kvblock_read_header(FILE *fp, uint64_t *remaining,
+                               uint32_t expected_block_tokens,
+                               uint32_t expected_block_seq,
+                               char *err, size_t errlen) {
+    uint32_t magic = 0, version = 0, seq = 0, tokc = 0, n_lay = 0, reserved = 0;
+    if (payload_read_u32(fp, &magic,    remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &version,  remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &seq,      remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &tokc,     remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &n_lay,    remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &reserved, remaining, err, errlen) != 0) return -1;
+    if (magic != DS4_KVBLOCK_MAGIC) {
+        payload_set_err(err, errlen,
+            "ds4_session_load_blocks: bad block magic (not a KVB1 block)");
+        return -1;
+    }
+    if (version != DS4_KVBLOCK_VERSION) {
+        payload_set_err(err, errlen,
+            "ds4_session_load_blocks: unsupported block version");
+        return -1;
+    }
+    if (tokc != expected_block_tokens) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+            "ds4_session_load_blocks: block header token_count=%u != handle "
+            "range=%u", tokc, expected_block_tokens);
+        payload_set_err(err, errlen, msg);
+        return -1;
+    }
+    if (n_lay != DS4_N_LAYER) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+            "ds4_session_load_blocks: block n_layers=%u != DS4_N_LAYER=%u",
+            n_lay, (uint32_t)DS4_N_LAYER);
+        payload_set_err(err, errlen, msg);
+        return -1;
+    }
+    if (seq != expected_block_seq) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+            "ds4_session_load_blocks: block seq=%u != expected=%u (out-of-order block)",
+            seq, expected_block_seq);
+        payload_set_err(err, errlen, msg);
+        return -1;
+    }
+    (void)reserved;
+    return 0;
+}
+
+/* Internal: CPU path of load_blocks. Block list already validated for
+ * contiguity-from-zero. */
+static int kvblock_load_blocks_cpu(ds4_session *s,
+                                   const ds4_block_handle *blocks, size_t block_count,
+                                   uint32_t total_tokens, uint32_t block_tokens,
+                                   char *err, size_t errlen) {
+    /* Capacity check: every block's row-end must fit comp_cap. The CPU
+     * comp_cap is sized to the session's ctx; if a caller passes a block
+     * for a context wider than we allocated, we should reject up front. */
+    const uint32_t cpu_comp_cap = session_cpu_comp_cap(s);
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = s->cpu_cache.layer[il].compress_ratio;
+        if (ratio == 0) continue;
+        if (total_tokens / ratio > cpu_comp_cap) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: total compressed rows would exceed session capacity");
+            return -1;
+        }
+    }
+
+    /* Reset the cache from scratch so partially-loaded state never leaks
+     * into the new prefix. The session checkpoint/logits get rebuilt below. */
+    s->checkpoint_valid = false;
+    s->mtp_draft_valid = false;
+    session_cpu_reset_cache(s);
+
+    /* Per-layer row watermark. After all blocks installed, equals
+     * total_tokens / ratio for every layer with ratio != 0. */
+    uint32_t n_comp[DS4_N_LAYER]       = {0};
+    uint32_t n_index_comp[DS4_N_LAYER] = {0};
+
+    for (size_t i = 0; i < block_count; i++) {
+        const ds4_block_handle *b = &blocks[i];
+        uint64_t remaining = b->payload_bytes;
+        if (kvblock_read_header(b->fp, &remaining,
+                                block_tokens, (uint32_t)i, err, errlen) != 0) {
+            return -1;
+        }
+        for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+            ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+            uint32_t ratio = 0;
+            if (payload_read_u32(b->fp, &ratio, &remaining, err, errlen) != 0) return -1;
+            if (ratio != layer->compress_ratio) {
+                char msg[200];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: layer %u ratio=%u in block %zu "
+                    "but engine layer ratio=%u",
+                    il, ratio, i, layer->compress_ratio);
+                payload_set_err(err, errlen, msg);
+                return -1;
+            }
+            if (ratio == 0) continue;
+
+            uint32_t comp_rows = 0;
+            if (payload_read_u32(b->fp, &comp_rows, &remaining, err, errlen) != 0) return -1;
+            const uint32_t expected_comp_rows = block_tokens / ratio;
+            if (comp_rows != expected_comp_rows) {
+                char msg[200];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: layer %u comp_rows=%u != expected=%u "
+                    "for block_tokens=%u ratio=%u",
+                    il, comp_rows, expected_comp_rows, block_tokens, ratio);
+                payload_set_err(err, errlen, msg);
+                return -1;
+            }
+            const uint32_t comp_row_start = (uint32_t)b->token_start / ratio;
+            const uint64_t comp_offset    = (uint64_t)comp_row_start * DS4_N_HEAD_DIM;
+            const uint64_t comp_bytes     = (uint64_t)comp_rows * DS4_N_HEAD_DIM * sizeof(float);
+            if (payload_read_bytes(b->fp,
+                                   layer->attn_comp_kv + comp_offset,
+                                   comp_bytes,
+                                   &remaining, err, errlen) != 0) return -1;
+            const uint32_t comp_row_end = comp_row_start + comp_rows;
+            if (comp_row_end > n_comp[il]) n_comp[il] = comp_row_end;
+
+            if (ratio == 4) {
+                uint32_t index_rows = 0;
+                if (payload_read_u32(b->fp, &index_rows, &remaining, err, errlen) != 0) return -1;
+                if (index_rows != expected_comp_rows) {
+                    char msg[200];
+                    snprintf(msg, sizeof(msg),
+                        "ds4_session_load_blocks: layer %u index_rows=%u != expected=%u",
+                        il, index_rows, expected_comp_rows);
+                    payload_set_err(err, errlen, msg);
+                    return -1;
+                }
+                const uint64_t idx_offset = (uint64_t)comp_row_start * DS4_N_INDEXER_HEAD_DIM;
+                const uint64_t idx_bytes  = (uint64_t)index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
+                if (payload_read_bytes(b->fp,
+                                       layer->index_comp_kv + idx_offset,
+                                       idx_bytes,
+                                       &remaining, err, errlen) != 0) return -1;
+                const uint32_t idx_row_end = comp_row_start + index_rows;
+                if (idx_row_end > n_index_comp[il]) n_index_comp[il] = idx_row_end;
+            }
+        }
+        /* Trailer — CRC32 placeholder; tolerated as zero per v1. */
+        uint32_t crc = 0;
+        if (payload_read_u32(b->fp, &crc, &remaining, err, errlen) != 0) return -1;
+        (void)crc;
+        if (remaining != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: block has trailing payload bytes");
+            return -1;
+        }
+    }
+
+    /* Install row watermarks. */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        s->cpu_cache.layer[il].n_comp       = n_comp[il];
+        s->cpu_cache.layer[il].n_index_comp = n_index_comp[il];
+        /* Raw rows are not preserved by the block format; load_blocks
+         * leaves n_raw at zero. The next ds4_session_sync() rebuilds
+         * the SWA ring by prefilling the suffix tokens. */
+    }
+
+    /* Rebuild a token-bearing checkpoint. The block format does not carry
+     * token IDs (only KV bytes), so we install a placeholder vector sized
+     * to total_tokens with id 0. Callers MUST invoke ds4_session_sync()
+     * with the full prompt immediately after load_blocks; that path
+     * compares the placeholder token list against the prompt and detects
+     * the mismatch as a "no common prefix" — falling back to refill from
+     * scratch. The interesting case (caller passes the same prompt that
+     * produced the blocks) is handled by the sync's existing
+     * common_prefix logic; for that to short-circuit prefill, the caller
+     * must overlay the real token IDs before sync.
+     *
+     * The contract is documented in ds4.h alongside load_blocks. For Tier B
+     * the placeholder is intentional: the C ABI surface returns a session
+     * that has the right KV state but a placeholder token list, and the
+     * caller (ds4_server / WombatKV bindings) is responsible for replacing
+     * checkpoint.v with the real token IDs before calling sync. */
+    token_vec new_checkpoint = {0};
+    for (uint32_t i = 0; i < total_tokens; i++) {
+        token_vec_push(&new_checkpoint, 0);
+    }
+    token_vec_free(&s->checkpoint);
+    s->checkpoint = new_checkpoint;
+    s->checkpoint_valid = true;
+    s->mtp_draft_valid = false;
+
+    /* Logits are last-token-only and not preserved across block-load.
+     * Zero them so any caller that reads before a sync gets a defined
+     * (uniform) distribution rather than stale data. */
+    if (s->logits) {
+        memset(s->logits, 0, (size_t)DS4_N_VOCAB * sizeof(float));
+    }
+    return 0;
+}
+
+#ifndef DS4_NO_GPU
+static int kvblock_load_blocks_gpu(ds4_session *s,
+                                   const ds4_block_handle *blocks, size_t block_count,
+                                   uint32_t total_tokens, uint32_t block_tokens,
+                                   char *err, size_t errlen) {
+    ds4_gpu_graph *g = &s->graph;
+    /* Capacity check. */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = ds4_layer_compress_ratio(il);
+        if (ratio == 0) continue;
+        if (total_tokens / ratio > g->layer_comp_cap[il]) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: total compressed rows would exceed graph capacity");
+            return -1;
+        }
+    }
+
+    /* Sync before mutating tensors so any in-flight commands settle on
+     * known state. */
+    if (ds4_gpu_synchronize() == 0) {
+        payload_set_err(err, errlen,
+            "ds4_session_load_blocks: failed to synchronize Metal before block load");
+        return -1;
+    }
+
+    /* Wipe row counts up front; we'll set them after every block lands. */
+    s->checkpoint_valid = false;
+    s->mtp_draft_valid = false;
+    g->mtp_n_raw = 0;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        g->layer_n_comp[il] = 0;
+        g->layer_n_index_comp[il] = 0;
+    }
+
+    uint32_t n_comp[DS4_N_LAYER]       = {0};
+    uint32_t n_index_comp[DS4_N_LAYER] = {0};
+
+    uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
+    int rc = 0;
+    for (size_t i = 0; rc == 0 && i < block_count; i++) {
+        const ds4_block_handle *b = &blocks[i];
+        uint64_t remaining = b->payload_bytes;
+        if (kvblock_read_header(b->fp, &remaining,
+                                block_tokens, (uint32_t)i, err, errlen) != 0) {
+            rc = -1; break;
+        }
+        for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+            uint32_t ratio = 0;
+            const uint32_t expected_ratio = ds4_layer_compress_ratio(il);
+            if (payload_read_u32(b->fp, &ratio, &remaining, err, errlen) != 0) {
+                rc = -1; break;
+            }
+            if (ratio != expected_ratio) {
+                char msg[200];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: layer %u ratio=%u in block %zu "
+                    "but engine layer ratio=%u",
+                    il, ratio, i, expected_ratio);
+                payload_set_err(err, errlen, msg);
+                rc = -1; break;
+            }
+            if (ratio == 0) continue;
+
+            uint32_t comp_rows = 0;
+            if (payload_read_u32(b->fp, &comp_rows, &remaining, err, errlen) != 0) {
+                rc = -1; break;
+            }
+            const uint32_t expected_comp_rows = block_tokens / ratio;
+            if (comp_rows != expected_comp_rows) {
+                char msg[200];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: layer %u comp_rows=%u != expected=%u "
+                    "for block_tokens=%u ratio=%u",
+                    il, comp_rows, expected_comp_rows, block_tokens, ratio);
+                payload_set_err(err, errlen, msg);
+                rc = -1; break;
+            }
+            const uint32_t comp_row_start = (uint32_t)b->token_start / ratio;
+            const uint64_t comp_offset    = (uint64_t)comp_row_start * DS4_N_HEAD_DIM * sizeof(float);
+            const uint64_t comp_bytes     = (uint64_t)comp_rows * DS4_N_HEAD_DIM * sizeof(float);
+            rc = payload_read_tensor_span(b->fp,
+                                          g->layer_attn_comp_cache[il],
+                                          comp_offset, comp_bytes,
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+            if (rc != 0) { rc = -1; break; }
+            const uint32_t comp_row_end = comp_row_start + comp_rows;
+            if (comp_row_end > n_comp[il]) n_comp[il] = comp_row_end;
+
+            if (ratio == 4) {
+                uint32_t index_rows = 0;
+                if (payload_read_u32(b->fp, &index_rows, &remaining, err, errlen) != 0) {
+                    rc = -1; break;
+                }
+                if (index_rows != expected_comp_rows) {
+                    char msg[200];
+                    snprintf(msg, sizeof(msg),
+                        "ds4_session_load_blocks: layer %u index_rows=%u != expected=%u",
+                        il, index_rows, expected_comp_rows);
+                    payload_set_err(err, errlen, msg);
+                    rc = -1; break;
+                }
+                const uint64_t idx_offset = (uint64_t)comp_row_start * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
+                const uint64_t idx_bytes  = (uint64_t)index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
+                rc = payload_read_tensor_span(b->fp,
+                                              g->layer_index_comp_cache[il],
+                                              idx_offset, idx_bytes,
+                                              buf, DS4_SESSION_IO_CHUNK,
+                                              &remaining, err, errlen);
+                if (rc != 0) { rc = -1; break; }
+                const uint32_t idx_row_end = comp_row_start + index_rows;
+                if (idx_row_end > n_index_comp[il]) n_index_comp[il] = idx_row_end;
+            }
+        }
+        if (rc == 0) {
+            uint32_t crc = 0;
+            if (payload_read_u32(b->fp, &crc, &remaining, err, errlen) != 0) {
+                rc = -1; break;
+            }
+            (void)crc;
+            if (remaining != 0) {
+                payload_set_err(err, errlen,
+                    "ds4_session_load_blocks: block has trailing payload bytes");
+                rc = -1; break;
+            }
+        }
+    }
+    free(buf);
+    if (rc != 0) return -1;
+
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        g->layer_n_comp[il]       = n_comp[il];
+        g->layer_n_index_comp[il] = n_index_comp[il];
+    }
+
+    /* Placeholder token vector — see CPU path comment for rationale. */
+    token_vec new_checkpoint = {0};
+    for (uint32_t i = 0; i < total_tokens; i++) {
+        token_vec_push(&new_checkpoint, 0);
+    }
+    token_vec_free(&s->checkpoint);
+    s->checkpoint = new_checkpoint;
+    s->checkpoint_valid = true;
+    s->mtp_draft_valid = false;
+    if (s->logits) {
+        memset(s->logits, 0, (size_t)DS4_N_VOCAB * sizeof(float));
+    }
+    return 0;
+}
+#endif
+
+int ds4_session_load_blocks(ds4_session *s,
+                            const ds4_block_handle *blocks, size_t block_count,
+                            char *err, size_t errlen) {
+    if (!s) {
+        payload_set_err(err, errlen, "ds4_session_load_blocks: null session");
+        return -1;
+    }
+    if (!blocks || block_count == 0) {
+        payload_set_err(err, errlen, "ds4_session_load_blocks: empty block list");
+        return -1;
+    }
+    /* Validate contiguity + alignment. */
+    int prev_end = 0;
+    int block_tokens = 0;
+    for (size_t i = 0; i < block_count; i++) {
+        const ds4_block_handle *b = &blocks[i];
+        if (i == 0 && b->token_start != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: first block must start at token 0");
+            return -1;
+        }
+        if (i > 0 && b->token_start != prev_end) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: blocks must be contiguous");
+            return -1;
+        }
+        const int bt = b->token_end - b->token_start;
+        if (kvblock_validate_block_tokens(bt) != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: bad block_tokens (must be positive multiple of 128)");
+            return -1;
+        }
+        if (i == 0) block_tokens = bt;
+        else if (bt != block_tokens) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: mixed block_tokens not supported");
+            return -1;
+        }
+        if (b->token_start % block_tokens != 0) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: block token_start not aligned to block_tokens");
+            return -1;
+        }
+        if (!b->fp) {
+            payload_set_err(err, errlen,
+                "ds4_session_load_blocks: block fp is null");
+            return -1;
+        }
+        prev_end = b->token_end;
+    }
+    const uint32_t total_tokens = (uint32_t)prev_end;
+    if (total_tokens >= (uint32_t)s->ctx_size) {
+        payload_set_err(err, errlen,
+            "ds4_session_load_blocks: total tokens exceeds session context");
+        return -1;
+    }
+    if (ds4_session_is_cpu(s)) {
+        return kvblock_load_blocks_cpu(s, blocks, block_count,
+                                       total_tokens, (uint32_t)block_tokens,
+                                       err, errlen);
+    }
+#ifdef DS4_NO_GPU
+    payload_set_err(err, errlen,
+        "ds4_session_load_blocks: graph backend support is not compiled in");
+    return -1;
+#else
+    return kvblock_load_blocks_gpu(s, blocks, block_count,
+                                   total_tokens, (uint32_t)block_tokens,
+                                   err, errlen);
+#endif
+}
+
 int ds4_session_save_snapshot(ds4_session *s, ds4_session_snapshot *snap, char *err, size_t errlen) {
     if (!s || !snap) {
         payload_set_err(err, errlen, "invalid session snapshot save");

@@ -9662,7 +9662,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
      * Failure here is non-fatal — the block load already succeeded;
      * the engine falls back to the v1 behaviour where session_sync
      * re-prefills the trailing window. */
-    int raw_tail_restored = 0;
+    int warm_tail_restored = 0;
     {
         const uint8_t *st_ptr = NULL;
         size_t st_len = 0;
@@ -9678,7 +9678,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
             int rc_install = ds4_session_install_raw_tail(
                 s->session, st_ptr, st_len, inst_err, sizeof(inst_err));
             if (rc_install == 0) {
-                raw_tail_restored = 1;
+                warm_tail_restored = 1;
             } else {
                 fprintf(stderr,
                         "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
@@ -9712,7 +9712,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
         snprintf(hint, sizeof(hint),
                  "wmbt_kv-tier_b:blocks=%zu/bt=%d%s",
                  matched, block_tokens,
-                 raw_tail_restored ? "/raw_tail" : "");
+                 warm_tail_restored ? "/warm_tail" : "");
         *loaded_path_out = xstrdup(hint);
     }
 
@@ -9721,12 +9721,12 @@ static int wmbt_kv_tier_b_try_load(server *s,
             "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
             "\"result\":\"hit\",\"chain_len\":%d,\"matched\":%zu,"
             "\"loaded_tokens\":%d,\"block_tokens\":%d,"
-            "\"raw_tail_restored\":%d,"
+            "\"warm_tail_restored\":%d,"
             "\"stages\":{\"chain_ms\":%.2f,\"lookup_ms\":%.2f,"
             "\"get_ms\":%.2f,\"load_blocks_ms\":%.2f,"
             "\"sidecar_ms\":%.2f,\"entry_to_exit_ms\":%.2f}}\n",
             n_blocks, matched, loaded_tokens, block_tokens,
-            raw_tail_restored,
+            warm_tail_restored,
             (t_post_chain - t_enter) * 1000.0,
             (t_post_lookup - t_post_chain) * 1000.0,
             (t_post_get - t_pre_get) * 1000.0,

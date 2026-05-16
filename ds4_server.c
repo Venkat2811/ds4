@@ -109,21 +109,33 @@ static char *xstrdup(const char *s) {
 static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
 
 /* Initialise the WombatKV handle from env (WMBT_KV_S3_*, WMBT_KV_*).
- * Required runtime env: DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
- * (the 24-hex-char model fingerprint digest the adapter / sidecar / engine
- * all agree on). If DS4_WOMBATKV_ENABLE is unset, this is a no-op and ds4
- * runs vanilla. If DS4_WOMBATKV_ENABLE is set but anything required is
- * missing/broken (fingerprint, S3 reach, daemon connect), exits with
- * non-zero — silent fallback to local kv-disk would mask a config error
- * and quietly serve worse perf than the user requested. */
-static void wmbt_kv_init_hooks(void) {
+ * Required runtime env: DS4_WOMBATKV_ENABLE=1. The 24-hex-char model
+ * fingerprint can be set explicitly via DS4_WMBT_KV_FINGERPRINT24, OR
+ * auto-derived from `sha1(model_path)[:24]` when that env is unset —
+ * stable per path, no extra config required.
+ * If DS4_WOMBATKV_ENABLE is unset, this is a no-op and ds4 runs vanilla.
+ * If DS4_WOMBATKV_ENABLE is set but S3 reach / daemon connect fails,
+ * exits non-zero — silent fallback to local kv-disk would mask a config
+ * error and quietly serve worse perf than the user requested. */
+static void wmbt_kv_init_hooks(const char *model_path) {
     if (!getenv("DS4_WOMBATKV_ENABLE")) return;
+    char derived_fp[25] = {0};
     const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
     if (!fp || strlen(fp) < 24) {
+        if (!model_path || !model_path[0]) {
+            fprintf(stderr,
+                    "ds4-server: DS4_WOMBATKV_ENABLE=1, fingerprint env unset, "
+                    "and model path is empty — cannot derive fingerprint\n");
+            exit(2);
+        }
+        char full_sha[41] = {0};
+        sha1_bytes_hex(model_path, strlen(model_path), full_sha);
+        memcpy(derived_fp, full_sha, 24);
+        derived_fp[24] = '\0';
+        fp = derived_fp;
         fprintf(stderr,
-                "ds4-server: DS4_WOMBATKV_ENABLE=1 but DS4_WMBT_KV_FINGERPRINT24 "
-                "is missing or shorter than 24 hex chars; refusing to start\n");
-        exit(2);
+                "ds4-server: DS4_WMBT_KV_FINGERPRINT24 unset; derived %s from sha1(%s)\n",
+                fp, model_path);
     }
     /* Tier B is DEFAULT-ON in 0.1.0-alpha. Caller can opt out with
      * WMBT_KV_TIER_B=0 (or any non-"1" value) — the alpha shipping
@@ -13060,7 +13072,7 @@ int main(int argc, char **argv) {
     g_listen_fd = lfd;
     server_log(DS4_LOG_DEFAULT, "ds4-server: listening on http://%s:%d", cfg.host, cfg.port);
 #ifdef DS4_WOMBATKV
-    wmbt_kv_init_hooks();
+    wmbt_kv_init_hooks(cfg.engine.model_path);
 #endif
 
     while (!g_stop_requested) {

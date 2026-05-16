@@ -9931,6 +9931,55 @@ static int wmbt_kv_tier_b_try_load(server *s,
         return 0;
     }
 
+    /* (6b) RFC 0007 §10.P5 raw-tail sidecar GET. The sidecar is keyed
+     * by the chain-tip hash of the matched prefix — chain[matched-1].
+     * Because the chain hashes are content-addressed and
+     * matched-position-dependent, the same chain[matched-1] is produced
+     * for any prompt sharing the first `matched * block_tokens` tokens.
+     * A hit means the producer wrote a sidecar at this exact tip; we
+     * install the raw bytes into the SWA ring and the downstream
+     * session_sync() can skip the suffix re-prefill of the last
+     * DS4_N_SWA tokens.
+     *
+     * Failure here is non-fatal — the block load already succeeded;
+     * the engine falls back to the v1 behaviour where session_sync
+     * re-prefills the trailing window. */
+    int raw_tail_restored = 0;
+    {
+        const uint8_t *st_ptr = NULL;
+        size_t st_len = 0;
+        wmbt_kv_borrow_t *st_borrow = NULL;
+        char st_err[160] = {0};
+        int32_t rc_st = wmbt_kv_get_raw_tail_borrowed(
+            g_wmbt_kv_handle, g_wmbt_kv_namespace,
+            chain_hex[matched - 1],
+            &st_ptr, &st_len, &st_borrow,
+            st_err, sizeof(st_err));
+        if (rc_st == 1 && st_ptr && st_len > 0) {
+            char inst_err[160] = {0};
+            int rc_install = ds4_session_install_raw_tail(
+                s->session, st_ptr, st_len, inst_err, sizeof(inst_err));
+            if (rc_install == 0) {
+                raw_tail_restored = 1;
+            } else {
+                fprintf(stderr,
+                        "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
+                        "\"sidecar\":\"install_err\","
+                        "\"err\":\"%s\"}\n",
+                        inst_err[0] ? inst_err : "(no message)");
+            }
+        } else if (rc_st == -1) {
+            fprintf(stderr,
+                    "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
+                    "\"sidecar\":\"get_err\","
+                    "\"err\":\"%s\"}\n",
+                    st_err[0] ? st_err : "(no message)");
+        }
+        /* rc_st == 0 is a miss: caller falls back; no log noise. */
+        if (st_borrow) wmbt_kv_release_borrow(st_borrow);
+    }
+    const double t_post_sidecar = now_sec();
+
     /* (7) Overlay real token IDs on the placeholder so the upcoming
      * ds4_session_sync() sees a perfect common prefix. */
     tier_b_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
@@ -9943,7 +9992,9 @@ static int wmbt_kv_tier_b_try_load(server *s,
     if (loaded_path_out) {
         char hint[96];
         snprintf(hint, sizeof(hint),
-                 "wmbt_kv-tier_b:blocks=%zu/bt=%d", matched, block_tokens);
+                 "wmbt_kv-tier_b:blocks=%zu/bt=%d%s",
+                 matched, block_tokens,
+                 raw_tail_restored ? "/raw_tail" : "");
         *loaded_path_out = xstrdup(hint);
     }
 
@@ -9952,14 +10003,17 @@ static int wmbt_kv_tier_b_try_load(server *s,
             "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
             "\"result\":\"hit\",\"chain_len\":%d,\"matched\":%zu,"
             "\"loaded_tokens\":%d,\"block_tokens\":%d,"
+            "\"raw_tail_restored\":%d,"
             "\"stages\":{\"chain_ms\":%.2f,\"lookup_ms\":%.2f,"
             "\"get_ms\":%.2f,\"load_blocks_ms\":%.2f,"
-            "\"entry_to_exit_ms\":%.2f}}\n",
+            "\"sidecar_ms\":%.2f,\"entry_to_exit_ms\":%.2f}}\n",
             n_blocks, matched, loaded_tokens, block_tokens,
+            raw_tail_restored,
             (t_post_chain - t_enter) * 1000.0,
             (t_post_lookup - t_post_chain) * 1000.0,
             (t_post_get - t_pre_get) * 1000.0,
             (t_post_load - t_post_get) * 1000.0,
+            (t_post_sidecar - t_post_load) * 1000.0,
             (t_exit - t_enter) * 1000.0);
     return loaded_tokens;
 }
@@ -10070,6 +10124,54 @@ static bool wmbt_kv_tier_b_save_chain(server *s,
     }
     const double t_post_put = now_sec();
 
+    /* (3b) RFC 0007 §10.P5 raw-tail sidecar PUT. After the block chain
+     * is saved, ALSO write the SWA-window raw KV under
+     * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` so the next load
+     * with matched=N can skip the post-load re-prefill of the trailing
+     * DS4_N_SWA tokens. Failure here is non-fatal — the block save
+     * already succeeded; subsequent loads will fall back to the slow
+     * re-prefill path on sidecar miss. */
+    bool sidecar_put_ok = false;
+    size_t sidecar_bytes = 0;
+    if (put_ok) {
+        char *sidecar_buf = NULL;
+        size_t sidecar_buf_size = 0;
+        FILE *sidecar_mem = open_memstream(&sidecar_buf, &sidecar_buf_size);
+        if (sidecar_mem) {
+            char serr[160] = {0};
+            int rc_save = ds4_session_save_raw_tail(s->session, sidecar_mem,
+                                                    serr, sizeof(serr));
+            if (rc_save == 0 && fflush(sidecar_mem) == 0) {
+                fclose(sidecar_mem);
+                char put_err[160] = {0};
+                int rc_st = wmbt_kv_put_raw_tail(
+                    g_wmbt_kv_handle, g_wmbt_kv_namespace,
+                    chain_hex[n_blocks - 1],
+                    (const uint8_t *)sidecar_buf, sidecar_buf_size,
+                    put_err, sizeof(put_err));
+                if (rc_st == 0) {
+                    sidecar_put_ok = true;
+                    sidecar_bytes = sidecar_buf_size;
+                } else {
+                    fprintf(stderr,
+                            "[MyelonInstr] {\"scope\":\"ds4_kvblocks_save\","
+                            "\"result\":\"sidecar_put_err\","
+                            "\"err\":\"%s\"}\n",
+                            put_err[0] ? put_err : "(no message)");
+                }
+            } else {
+                fclose(sidecar_mem);
+                fprintf(stderr,
+                        "[MyelonInstr] {\"scope\":\"ds4_kvblocks_save\","
+                        "\"result\":\"sidecar_save_err\","
+                        "\"err\":\"%s\"}\n",
+                        serr[0] ? serr : "(no message)");
+            }
+            free(sidecar_buf);
+        }
+    }
+    const double t_post_sidecar = now_sec();
+
     /* (4) Cleanup. */
     for (int i = 0; i < n_blocks; i++) free(payloads[i]);
     free(payloads);
@@ -10082,13 +10184,17 @@ static bool wmbt_kv_tier_b_save_chain(server *s,
                 "[MyelonInstr] {\"scope\":\"ds4_kvblocks_save\","
                 "\"result\":\"ok\",\"reason\":\"%s\",\"n_blocks\":%d,"
                 "\"block_tokens\":%d,\"bytes\":%zu,"
+                "\"sidecar_put\":%d,\"sidecar_bytes\":%zu,"
                 "\"stages\":{\"chain_ms\":%.2f,\"save_blocks_ms\":%.2f,"
-                "\"put_ms\":%.2f,\"entry_to_exit_ms\":%.2f}}\n",
+                "\"put_ms\":%.2f,\"sidecar_ms\":%.2f,"
+                "\"entry_to_exit_ms\":%.2f}}\n",
                 reason ? reason : "(unspecified)",
                 n_blocks, block_tokens, put_bytes,
+                sidecar_put_ok ? 1 : 0, sidecar_bytes,
                 (t_post_chain - t_enter) * 1000.0,
                 (t_post_save_blocks - t_post_chain) * 1000.0,
                 (t_post_put - t_post_save_blocks) * 1000.0,
+                (t_post_sidecar - t_post_put) * 1000.0,
                 (t_exit - t_enter) * 1000.0);
     }
     return put_ok;

@@ -9440,33 +9440,11 @@ static int wmbt_kv_v2_key(char *out, size_t out_cap, uint32_t text_bytes,
  * ================================================================== */
 
 /* Two-call sha1 extension that emits a 32-byte digest as 64-char hex.
- * The first 40 chars are the canonical sha1(in) hex; the trailing 24
- * are sha1(sha1(in) || "\x01")[0..12] hex. Sufficient for the C ABI's
- * 64-hex / 32-byte requirement without pulling in blake3. */
-static void sha1_64hex(const void *in, size_t in_len, char out[65]) {
-    sha1_ctx c;
-    sha1_init(&c);
-    sha1_update(&c, in, in_len);
-    uint8_t digest1[20];
-    sha1_final(&c, digest1);
-    /* second 20 bytes of input domain: digest1 || 0x01 */
-    sha1_init(&c);
-    sha1_update(&c, digest1, sizeof(digest1));
-    uint8_t one = 0x01;
-    sha1_update(&c, &one, 1);
-    uint8_t digest2[20];
-    sha1_final(&c, digest2);
-    /* Compose 32-byte digest: digest1[0..20] || digest2[0..12] */
-    uint8_t composed[32];
-    memcpy(composed, digest1, 20);
-    memcpy(composed + 20, digest2, 12);
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 32; i++) {
-        out[i * 2]     = hex[composed[i] >> 4];
-        out[i * 2 + 1] = hex[composed[i] & 0xf];
-    }
-    out[64] = '\0';
-}
+ * NOTE: previously this file defined a `sha1_64hex` helper that composed
+ * two sha1 calls to produce a 32-byte / 64-hex digest. After RFC 0011
+ * §C5 the chain-compute step uses the wombatkv C ABI's blake3 helper
+ * (`wmbt_kv_blake3_64hex`) instead, which is faster and uses a proper
+ * cryptographically-keyed hash family. */
 
 /* Compute the chain of 64-char hex hashes for the leading
  * (token_count / block_tokens) full blocks of `tokens`. Trailing
@@ -9510,7 +9488,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
                       quant_bits);
     if (sn < 0 || (size_t)sn >= sizeof(seed_input)) return -1;
     char seed_hex[65];
-    sha1_64hex(seed_input, (size_t)sn, seed_hex);
+    wmbt_kv_blake3_64hex((const uint8_t *)seed_input, (size_t)sn, seed_hex);
 
     /* Per-block step: feed (prev_hex || N tokens as bytes) into
      * sha1_64hex. We treat the tokens block as raw bytes (sizeof(int)
@@ -9519,32 +9497,22 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
      * hashes — so endianness is fine. */
     const size_t block_bytes = (size_t)block_tokens * sizeof(int);
     const char *prev_hex = seed_hex;
+    /* Per-block step: blake3(prev_hex || block_bytes) via the
+     * wombatkv C ABI. RFC 0011 §C5: replaces the prior hand-rolled
+     * sha1-domain-extension hack (`sha1_update(prev_hex) + tokens`,
+     * twice, concatenated to 32 bytes). blake3 is a proper
+     * cryptographically-keyed hash and ~5-10× faster on short inputs.
+     * Block-bytes upper bound: max block_tokens × sizeof(int)
+     * = (DS4_KVBLOCK_MAX_BLOCK_TOKENS) × 4 ≤ ~16 KiB on M3 Max
+     * configurations; well below the 64+64 KiB stack buffer below. */
+    uint8_t step_buf[64 + 64 * 1024];
+    if (block_bytes > sizeof(step_buf) - 64) return -1;
     for (int i = 0; i < n_blocks; i++) {
-        /* sha1_update is fed prev_hex (64 bytes, no NUL) then the
-         * block's raw token bytes. */
-        sha1_ctx c;
-        sha1_init(&c);
-        sha1_update(&c, prev_hex, 64);
+        memcpy(step_buf, prev_hex, 64);
         const int *blk = tokens->v + (size_t)i * (size_t)block_tokens;
-        sha1_update(&c, blk, block_bytes);
-        uint8_t d1[20];
-        sha1_final(&c, d1);
-        sha1_init(&c);
-        sha1_update(&c, d1, sizeof(d1));
-        uint8_t one = 0x01;
-        sha1_update(&c, &one, 1);
-        uint8_t d2[20];
-        sha1_final(&c, d2);
-        uint8_t composed[32];
-        memcpy(composed, d1, 20);
-        memcpy(composed + 20, d2, 12);
-        static const char hex[] = "0123456789abcdef";
+        memcpy(step_buf + 64, blk, block_bytes);
         char *o = out_chain_hex[i];
-        for (int b = 0; b < 32; b++) {
-            o[b * 2]     = hex[composed[b] >> 4];
-            o[b * 2 + 1] = hex[composed[b] & 0xf];
-        }
-        o[64] = '\0';
+        wmbt_kv_blake3_64hex(step_buf, 64 + block_bytes, o);
         prev_hex = o;
     }
     return n_blocks;

@@ -17131,13 +17131,30 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
             "ds4_session_install_raw_tail: missing end sentinel");
         return -1;
     }
-    /* Extend checkpoint to original_total_tokens. ds4_session_sync then
-     * sees the trailing tokens as part of the established prefix and
-     * skips the partial-block re-prefill that was costing ~1500 ms
-     * before this fix. Caller is responsible for overlaying real token
-     * IDs across the entire extended range via the live token vector. */
-    while ((uint32_t)s->checkpoint.len < original_total_tokens) {
-        token_vec_push(&s->checkpoint, 0);
+    /* Extend checkpoint to `original_total_tokens - 1` (NOT all the way
+     * to original_total_tokens). Leaving one token of suffix means
+     * ds4_session_sync runs exactly one forward pass on the final prompt
+     * token. That single forward pass populates `s->logits` (which is
+     * NOT preserved by the raw_tail envelope — it's a per-session output
+     * buffer). Without this trailing forward, decode samples from the new
+     * session's uninitialized logits buffer and produces garbage output
+     * (observed in coherence smoke: prompt about Count of Monte Cristo
+     * decodes to Russian text via stale-logits sampling).
+     *
+     * The K/V written by the suffix=1 forward overwrites the restored
+     * K/V at position N-1 — but with the same model weights and same
+     * input token, the computed K/V is bit-identical (modulo Metal
+     * non-determinism), so this is a free correctness check too.
+     *
+     * Cost: ~30 ms for one decode-style forward (vs ~1500 ms full
+     * re-prefill of the suffix when checkpoint isn't extended). Caller
+     * is responsible for overlaying real token IDs across the extended
+     * range via the live token vector. */
+    if (original_total_tokens >= 1) {
+        const uint32_t target_len = original_total_tokens - 1;
+        while ((uint32_t)s->checkpoint.len < target_len) {
+            token_vec_push(&s->checkpoint, 0);
+        }
     }
     return 0;
 }
@@ -17237,9 +17254,14 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
             "ds4_session_install_raw_tail: missing end sentinel (gpu)");
         return -1;
     }
-    /* Extend checkpoint to original_total_tokens — see CPU install. */
-    while ((uint32_t)s->checkpoint.len < original_total_tokens) {
-        token_vec_push(&s->checkpoint, 0);
+    /* Extend checkpoint to `original_total_tokens - 1` so ds4_session_sync
+     * runs one forward pass on the final prompt token to populate
+     * `s->logits` — see CPU install for full rationale. */
+    if (original_total_tokens >= 1) {
+        const uint32_t target_len = original_total_tokens - 1;
+        while ((uint32_t)s->checkpoint.len < target_len) {
+            token_vec_push(&s->checkpoint, 0);
+        }
     }
     return 0;
 }

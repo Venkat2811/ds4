@@ -14,7 +14,6 @@ After N trials, print median + min + max per cell.
 
 import json
 import os
-import signal
 import statistics
 import subprocess
 import sys
@@ -82,27 +81,39 @@ def start_server(mode: str, logfile: Path) -> int:
         d.mkdir()
     env = os.environ.copy()
     if mode == "wombatkv":
-        env.update({
-            "DS4_WOMBATKV_ENABLE": "1",
-            "WMBT_KV_S3_ENDPOINT": S3_ENDPOINT,
-            "WMBT_KV_BUCKET": f"wombatkv-demo-{mode}",
-            "WMBT_KV_PUFFER_DIR": str(puffer),
-            "WMBT_KV_TIMING": "1",
-            "WMBT_KV_SKIP_TIER_A_PROBE": "1",
-        })
+        env.update(
+            {
+                "DS4_WOMBATKV_ENABLE": "1",
+                "WMBT_KV_S3_ENDPOINT": S3_ENDPOINT,
+                "WMBT_KV_BUCKET": f"wombatkv-demo-{mode}",
+                "WMBT_KV_PUFFER_DIR": str(puffer),
+                "WMBT_KV_TIMING": "1",
+                "WMBT_KV_SKIP_TIER_A_PROBE": "1",
+            }
+        )
     cmd = [
         str(DS4_BIN),
-        "--model", MODEL,
-        "--ctx", "32768",
-        "--kv-disk-dir", str(kvdir),
-        "--kv-cache-min-tokens", "256",
-        "--kv-disk-space-mb", "16384",
-        "--port", str(PORT),
+        "--model",
+        MODEL,
+        "--ctx",
+        "32768",
+        "--kv-disk-dir",
+        str(kvdir),
+        "--kv-cache-min-tokens",
+        "256",
+        "--kv-disk-space-mb",
+        "16384",
+        "--port",
+        str(PORT),
     ]
     with open(logfile, "w") as f:
         proc = subprocess.Popen(
-            cmd, cwd=str(DS4_DIR), env=env,
-            stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            cmd,
+            cwd=str(DS4_DIR),
+            env=env,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
     for _ in range(90):
@@ -118,16 +129,21 @@ def start_server(mode: str, logfile: Path) -> int:
 
 
 def send_request_ttft(prompt_text: str) -> float:
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "system", "content": "You are a literary assistant."},
-            {"role": "user", "content": f"Here is a passage:\n\n{prompt_text}\n\nSummarize the key themes in 50 words."},
-        ],
-        "max_tokens": 50,
-        "temperature": 0.0,
-        "stream": True,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "You are a literary assistant."},
+                {
+                    "role": "user",
+                    "content": f"Here is a passage:\n\n{prompt_text}\n\nSummarize the key themes in 50 words.",
+                },
+            ],
+            "max_tokens": 50,
+            "temperature": 0.0,
+            "stream": True,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{PORT}/v1/chat/completions",
         data=payload,
@@ -150,15 +166,17 @@ def warmup_metal() -> float:
     """Fire a tiny unrelated request to JIT Metal kernels + warm the model
     runtime. Returns elapsed ms for telemetry; not used for headline numbers.
     The bench prompt's cache key is unaffected because the content differs."""
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "user", "content": "warmup ping"},
-        ],
-        "max_tokens": 1,
-        "temperature": 0.0,
-        "stream": True,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "user", "content": "warmup ping"},
+            ],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "stream": True,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{PORT}/v1/chat/completions",
         data=payload,
@@ -181,7 +199,7 @@ def run_trial(mode: str, prompt_text: str, trial: int) -> tuple[float, float]:
     kill_servers()
     log1 = Path(f"/tmp/multibench-{mode}-trial{trial}-turn1.log")
     log2 = Path(f"/tmp/multibench-{mode}-trial{trial}-turn2.log")
-    pid = start_server(mode, log1)
+    start_server(mode, log1)
     t1 = send_request_ttft(prompt_text)
     kill_servers()
     # Wipe kvdisk between turns (same as demo_wombatkv.sh).
@@ -208,7 +226,9 @@ def main():
             # Wipe MinIO between trials so each turn-1 is a true cold S3 state.
             wipe_minio()
             t1, t2 = run_trial(mode, prompt_text, trial)
-            print(f"  trial {trial}/{N_TRIALS}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)")
+            print(
+                f"  trial {trial}/{N_TRIALS}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)"
+            )
             results[mode].append((t1, t2))
 
     print("\n===== RESULTS =====")
@@ -216,17 +236,23 @@ def main():
         turns1 = [t1 for t1, _ in results[mode]]
         turns2 = [t2 for _, t2 in results[mode]]
         print(f"\n{mode}:")
-        print(f"  turn1 cold:    median={statistics.median(turns1):.0f} ms  "
-              f"min={min(turns1):.0f}  max={max(turns1):.0f}  "
-              f"n={len(turns1)}")
-        print(f"  turn2 restart: median={statistics.median(turns2):.0f} ms  "
-              f"min={min(turns2):.0f}  max={max(turns2):.0f}  "
-              f"n={len(turns2)}")
+        print(
+            f"  turn1 cold:    median={statistics.median(turns1):.0f} ms  "
+            f"min={min(turns1):.0f}  max={max(turns1):.0f}  "
+            f"n={len(turns1)}"
+        )
+        print(
+            f"  turn2 restart: median={statistics.median(turns2):.0f} ms  "
+            f"min={min(turns2):.0f}  max={max(turns2):.0f}  "
+            f"n={len(turns2)}"
+        )
 
     nat_t2 = statistics.median([t2 for _, t2 in results["native"]])
     wmbt_t2 = statistics.median([t2 for _, t2 in results["wombatkv"]])
     if wmbt_t2 > 0:
-        print(f"\n  CELL B SPEEDUP (median turn-2 native / median turn-2 wombatkv): {nat_t2/wmbt_t2:.1f}x")
+        print(
+            f"\n  CELL B SPEEDUP (median turn-2 native / median turn-2 wombatkv): {nat_t2 / wmbt_t2:.1f}x"
+        )
 
 
 if __name__ == "__main__":

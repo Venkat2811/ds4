@@ -48,11 +48,6 @@ start_server() {
       WMBT_KV_BUCKET=wombatkv-demo-$mode
       WMBT_KV_PUFFER_DIR="$puffer"
       WMBT_KV_TIMING=1
-      # TEMPORARY measurement gate: force load through Tier B
-      # prefix-share blocks instead of the Tier A G1 short-circuit.
-      # C4 removes Tier A entirely; until then this env keeps the
-      # bench honest about Tier B cost.
-      WMBT_KV_SKIP_TIER_A_PROBE=1
     )
   fi
 

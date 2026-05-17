@@ -10408,8 +10408,18 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
      * .kv-format buffer (header + textlen + text + payload + tool map)
      * in memory and PUT it under the v2 key — readers (incl. peers and
      * future restarts) reconstruct via fmemopen the same way the local
-     * path would have via fopen. */
-    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+     * path would have via fopen.
+     *
+     * C4: gated off by default (mirrors load-side gating above). Tier B
+     * blocks are now the authoritative WombatKV state path; the legacy
+     * monolithic sha1(prompt_text)-keyed save is wasted storage. Opt
+     * back in via `WMBT_KV_ENABLE_TIER_A=1` for emergency rollback. */
+    static int g_save_skip_tier_a = -1;
+    if (g_save_skip_tier_a == -1) {
+        const char *e = getenv("WMBT_KV_ENABLE_TIER_A");
+        g_save_skip_tier_a = (e && e[0] == '1') ? 0 : 1;
+    }
+    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle && !g_save_skip_tier_a) {
         const uint64_t now = (uint64_t)time(NULL);
         uint8_t h[KV_CACHE_FIXED_HEADER];
         uint8_t ext_flags = tool_memory_count_dsml_in_text(s, text) > 0
@@ -10813,16 +10823,18 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
      * When TIER_B is on but Tier A misses, we fall through to the
      * existing Tier B block at `if (g_wmbt_kv_tier_b && ...)` so the
      * Tier B prefix-share path is preserved. */
-    /* Temporary measurement gate: WMBT_KV_SKIP_TIER_A_PROBE=1 disables
-     * the exact-key (Tier A) G1 probe so the load path falls through
-     * to the Tier B prefix-share block restore. Used to isolate the
-     * Tier B + parallel trailing-token (RFC 0012 Idea 1) cost from
-     * Tier A's single-blob fast path. C4 removes Tier A architecturally;
-     * this env is the measurement scaffold before that lands. */
+    /* C4: Tier A is OFF by default. The Tier B path (with the RFC 0013
+     * suffix=1 fix) gives 71.7× cell-B speedup and is the architecturally
+     * correct restore mechanism — Tier A's exact-key fast path is
+     * neither needed nor sufficient (cross-conversation prefix-share
+     * relies on Tier B's content-addressed blocks, which Tier A bypasses).
+     * Opt back in with `WMBT_KV_ENABLE_TIER_A=1` for emergency rollback;
+     * otherwise the legacy load paths below are skipped. The dead
+     * code is removed in a separate cleanup commit. */
     static int g_skip_tier_a_probe = -1;
     if (g_skip_tier_a_probe == -1) {
-        const char *e = getenv("WMBT_KV_SKIP_TIER_A_PROBE");
-        g_skip_tier_a_probe = (e && e[0] == '1') ? 1 : 0;
+        const char *e = getenv("WMBT_KV_ENABLE_TIER_A");
+        g_skip_tier_a_probe = (e && e[0] == '1') ? 0 : 1;
     }
     if (g_wmbt_kv_tier_b && g_wmbt_kv_replace_local && g_wmbt_kv_handle
         && !g_skip_tier_a_probe) {

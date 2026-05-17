@@ -16724,8 +16724,14 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  */
 #define DS4_KVBLOCK_RAW_TAIL_MAGIC        0x52545431u   /* 'R','T','T','1' little-endian */
 #define DS4_KVBLOCK_RAW_TAIL_END          0x52545445u   /* 'R','T','T','E' little-endian */
-#define DS4_KVBLOCK_RAW_TAIL_VERSION      1u
-#define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 24u
+/* v2 envelope adds `original_total_tokens` u32 field after `bytes_per_elem`
+ * so the install path can position raw bytes at the correct token offset
+ * AND extend the session checkpoint to original_total_tokens, eliminating
+ * the trailing-partial-block re-prefill cost (the "1500 ms gap" from the
+ * cleanup/alpha-prep bench). Alpha breaking-window policy applies — no
+ * v1 reader, old envelopes are abandoned. */
+#define DS4_KVBLOCK_RAW_TAIL_VERSION      2u
+#define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 28u
 
 /* Internal: validate block_tokens.
  *
@@ -17022,8 +17028,13 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  * already in oldest-first order within [n_raw - raw_live, n_raw)) into a
  * RAW_TAIL envelope. raw_live = min(checkpoint.len, DS4_N_SWA). */
 static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
+                                     uint32_t prompt_tokens_count,
                                      char *err, size_t errlen) {
-    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    /* Save the SWA window AT THE PROMPT BOUNDARY, not at the live (post-decode)
+     * position. checkpoint_len_for_envelope is what the install side will use
+     * to position the raw bytes; it MUST be the prompt length so the install
+     * extends the checkpoint to the prompt length (not the post-response one). */
+    const uint32_t checkpoint_len = prompt_tokens_count;
     uint32_t raw_live = DS4_N_SWA;
     if (raw_live > checkpoint_len) raw_live = checkpoint_len;
 
@@ -17033,6 +17044,11 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
     if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
     if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
     if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+    /* v2: original_total_tokens — the prompt length at save time. The
+     * install side uses this to extend `s->checkpoint.len` so
+     * `ds4_session_sync()` sees a complete prefix and skips the
+     * trailing-partial-block re-prefill. */
+    if (payload_write_u32(fp, checkpoint_len,                     err, errlen) != 0) return -1;
 
     if (raw_live > 0) {
         for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
@@ -17059,12 +17075,32 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
  * (phys = pos % raw_cap) so the on-disk byte order is logical
  * oldest-first regardless of the ring's wrap state. */
 static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
+                                     uint32_t prompt_tokens_count,
                                      char *err, size_t errlen) {
     const ds4_gpu_graph *g = &s->graph;
-    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    /* See CPU save above. checkpoint_len in this function = "where the
+     * envelope says the prompt ended" — the install side will extend
+     * the restored checkpoint to this position. Use prompt_tokens_count
+     * so we skip response tokens that the cache has accumulated. */
+    const uint32_t checkpoint_len = prompt_tokens_count;
+    const uint32_t live_len = (uint32_t)s->checkpoint.len;
+    /* The GPU ring cache holds positions [live_len - raw_cap, live_len).
+     * To read the SWA window at the prompt boundary, the desired range
+     * [prompt - raw_live, prompt) must be a subset. Constrain raw_live
+     * so the start position is >= the oldest position the ring still has. */
     uint32_t raw_live = g->raw_window ? g->raw_window : DS4_N_SWA;
     if (raw_live > g->raw_cap) raw_live = g->raw_cap;
     if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+    if (live_len > g->raw_cap) {
+        const uint32_t oldest_in_ring = live_len - g->raw_cap;
+        if (checkpoint_len > oldest_in_ring + raw_live) {
+            /* prompt's window is fully inside ring — no constraint */
+        } else if (checkpoint_len > oldest_in_ring) {
+            raw_live = checkpoint_len - oldest_in_ring;
+        } else {
+            raw_live = 0;
+        }
+    }
 
     if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
     if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
@@ -17072,6 +17108,8 @@ static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
     if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
     if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
     if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+    /* v2: original_total_tokens — see CPU save above. */
+    if (payload_write_u32(fp, checkpoint_len,                     err, errlen) != 0) return -1;
 
     if (raw_live > 0) {
         uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
@@ -17098,6 +17136,7 @@ static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
 #endif
 
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              uint32_t prompt_tokens_count,
                               char *err, size_t errlen) {
     if (!s || !fp) {
         payload_set_err(err, errlen, "ds4_session_save_raw_tail: null arg");
@@ -17108,8 +17147,18 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
             "ds4_session_save_raw_tail: session has no valid checkpoint");
         return -1;
     }
+    /* prompt_tokens_count=0 means "use checkpoint.len" — only correct when
+     * save runs at end of prefill, before decode mutates the cache. */
+    if (prompt_tokens_count == 0) {
+        prompt_tokens_count = (uint32_t)s->checkpoint.len;
+    }
+    if (prompt_tokens_count > (uint32_t)s->checkpoint.len) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: prompt_tokens_count > checkpoint.len");
+        return -1;
+    }
     if (ds4_session_is_cpu(s)) {
-        return kvblock_save_raw_tail_cpu(s, fp, err, errlen);
+        return kvblock_save_raw_tail_cpu(s, fp, prompt_tokens_count, err, errlen);
     }
 #ifdef DS4_NO_GPU
     payload_set_err(err, errlen,
@@ -17121,7 +17170,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
             "ds4_session_save_raw_tail: failed to synchronize Metal before save");
         return -1;
     }
-    return kvblock_save_raw_tail_gpu(s, fp, err, errlen);
+    return kvblock_save_raw_tail_gpu(s, fp, prompt_tokens_count, err, errlen);
 #endif
 }
 
@@ -17158,11 +17207,14 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
         return -1;
     }
     uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    uint32_t original_total_tokens = 0;
     if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    /* v2: original_total_tokens — the prompt length at save time. */
+    if (payload_read_u32(fp, &original_total_tokens, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
         || n_layers != (uint32_t)DS4_N_LAYER
         || head_dim != (uint32_t)DS4_N_HEAD_DIM
@@ -17178,19 +17230,41 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
             "ds4_session_install_raw_tail: n_raw_rows > SWA window");
         return -1;
     }
+    if (n_raw_rows > original_total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > original_total_tokens");
+        return -1;
+    }
+    if (original_total_tokens < (uint32_t)s->checkpoint.len) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: original_total_tokens shorter than checkpoint");
+        return -1;
+    }
+    /* Place raw bytes at logical positions [original_total_tokens - n_raw_rows,
+     * original_total_tokens). For the CPU linear cache that maps directly to
+     * the same physical indices. raw_first is the index of the first byte. */
+    const uint32_t raw_first = original_total_tokens - n_raw_rows;
     const uint64_t per_layer_bytes =
         (uint64_t)n_raw_rows * head_dim * bytes_per_elem;
     for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
         ds4_layer_cache *layer = &s->cpu_cache.layer[il];
-        if (n_raw_rows > layer->cap_raw) {
+        if (original_total_tokens > layer->cap_raw) {
             fclose(fp);
             payload_set_err(err, errlen,
-                "ds4_session_install_raw_tail: n_raw_rows > cpu cap_raw");
+                "ds4_session_install_raw_tail: original_total_tokens > cpu cap_raw");
             return -1;
         }
-        if (payload_read_bytes(fp, layer->raw_kv, per_layer_bytes,
+        if (payload_read_bytes(fp,
+                               layer->raw_kv + (uint64_t)raw_first * head_dim,
+                               per_layer_bytes,
                                &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-        layer->n_raw = n_raw_rows;
+        /* n_raw is the number of LIVE raw positions; advance to
+         * original_total_tokens so subsequent attention reads see the
+         * trailing-token K/V as well, and a future save preserves the
+         * same logical positions. */
+        layer->n_raw = original_total_tokens;
     }
     uint32_t end_magic = 0;
     if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
@@ -17199,6 +17273,14 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: missing end sentinel");
         return -1;
+    }
+    /* Extend checkpoint to original_total_tokens. ds4_session_sync then
+     * sees the trailing tokens as part of the established prefix and
+     * skips the partial-block re-prefill that was costing ~1500 ms
+     * before this fix. Caller is responsible for overlaying real token
+     * IDs across the entire extended range via the live token vector. */
+    while ((uint32_t)s->checkpoint.len < original_total_tokens) {
+        token_vec_push(&s->checkpoint, 0);
     }
     return 0;
 }
@@ -17229,11 +17311,14 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
         return -1;
     }
     uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    uint32_t original_total_tokens = 0;
     if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    /* v2: original_total_tokens — the prompt length at save time. */
+    if (payload_read_u32(fp, &original_total_tokens, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
         || n_layers != (uint32_t)DS4_N_LAYER
         || head_dim != (uint32_t)DS4_N_HEAD_DIM
@@ -17250,10 +17335,16 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
         return -1;
     }
     ds4_gpu_graph *g = &s->graph;
-    if (n_raw_rows > total_tokens) {
+    if (n_raw_rows > original_total_tokens) {
         fclose(fp);
         payload_set_err(err, errlen,
-            "ds4_session_install_raw_tail: n_raw_rows > total_tokens (gpu)");
+            "ds4_session_install_raw_tail: n_raw_rows > original_total_tokens (gpu)");
+        return -1;
+    }
+    if (original_total_tokens < total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: original_total_tokens shorter than checkpoint (gpu)");
         return -1;
     }
     if (n_raw_rows > g->raw_cap) {
@@ -17262,7 +17353,9 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
             "ds4_session_install_raw_tail: n_raw_rows > graph raw_cap");
         return -1;
     }
-    const uint32_t raw_first = total_tokens - n_raw_rows;
+    /* Position raw bytes at logical positions [original_total_tokens - n_raw_rows,
+     * original_total_tokens). The GPU ring math (pos % raw_cap) handles wrap. */
+    const uint32_t raw_first = original_total_tokens - n_raw_rows;
     uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
     int rc = 0;
     for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
@@ -17286,6 +17379,10 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: missing end sentinel (gpu)");
         return -1;
+    }
+    /* Extend checkpoint to original_total_tokens — see CPU install. */
+    while ((uint32_t)s->checkpoint.len < original_total_tokens) {
+        token_vec_push(&s->checkpoint, 0);
     }
     return 0;
 }

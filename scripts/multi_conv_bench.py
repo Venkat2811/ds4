@@ -48,7 +48,7 @@ PROMPT_FILE = Path("/tmp/pg1184.txt")
 PORT = 8000
 S3_ENDPOINT = "http://127.0.0.1:9200"
 DOC_CHAR_BUDGET = 40000  # ~10k tokens — long enough that cold prefill is meaningful
-MAX_NEW_TOKENS = 50      # cap response to keep per-turn time bounded
+MAX_NEW_TOKENS = 50  # cap response to keep per-turn time bounded
 N_CONVS = 5
 N_TURNS = 5
 
@@ -132,26 +132,38 @@ def start_server(mode: str, logfile: Path) -> None:
         d.mkdir(parents=True)
     env = os.environ.copy()
     if mode == "wombatkv":
-        env.update({
-            "DS4_WOMBATKV_ENABLE": "1",
-            "WMBT_KV_S3_ENDPOINT": S3_ENDPOINT,
-            "WMBT_KV_BUCKET": "wombatkv-demo-wombatkv",
-            "WMBT_KV_PUFFER_DIR": str(puffer),
-            "WMBT_KV_TIMING": "1",
-        })
+        env.update(
+            {
+                "DS4_WOMBATKV_ENABLE": "1",
+                "WMBT_KV_S3_ENDPOINT": S3_ENDPOINT,
+                "WMBT_KV_BUCKET": "wombatkv-demo-wombatkv",
+                "WMBT_KV_PUFFER_DIR": str(puffer),
+                "WMBT_KV_TIMING": "1",
+            }
+        )
     cmd = [
         str(DS4_BIN),
-        "--model", MODEL,
-        "--ctx", "32768",
-        "--kv-disk-dir", str(kvdir),
-        "--kv-cache-min-tokens", "256",
-        "--kv-disk-space-mb", "16384",
-        "--port", str(PORT),
+        "--model",
+        MODEL,
+        "--ctx",
+        "32768",
+        "--kv-disk-dir",
+        str(kvdir),
+        "--kv-cache-min-tokens",
+        "256",
+        "--kv-disk-space-mb",
+        "16384",
+        "--port",
+        str(PORT),
     ]
     with open(logfile, "w") as f:
         subprocess.Popen(
-            cmd, cwd=str(DS4_DIR), env=env,
-            stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            cmd,
+            cwd=str(DS4_DIR),
+            env=env,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
     for _ in range(120):
@@ -167,16 +179,19 @@ def start_server(mode: str, logfile: Path) -> None:
 
 def chat_complete(messages: list[dict]) -> tuple[float, float, str]:
     """Returns (ttft_ms, total_ms, response_text)."""
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": messages,
-        "max_tokens": MAX_NEW_TOKENS,
-        "temperature": 0.0,
-        "stream": True,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": "deepseek-v4-flash",
+            "messages": messages,
+            "max_tokens": MAX_NEW_TOKENS,
+            "temperature": 0.0,
+            "stream": True,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{PORT}/v1/chat/completions",
-        data=payload, headers={"Content-Type": "application/json"},
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
     started = time.perf_counter()
     ttft_ms = None
@@ -236,15 +251,21 @@ def main() -> None:
             questions = QUESTION_SETS[conv_id]
             dialogue: list[dict] = [
                 {"role": "system", "content": "You are a literary assistant."},
-                {"role": "user", "content":
-                 f"Here is a passage:\n\n{doc_text}\n\n{questions[0]}"},
+                {
+                    "role": "user",
+                    "content": f"Here is a passage:\n\n{doc_text}\n\n{questions[0]}",
+                },
             ]
-            print(f"=== {mode} conv {conv_id+1}/{N_CONVS} ===")
+            print(f"=== {mode} conv {conv_id + 1}/{N_CONVS} ===")
             for turn in range(N_TURNS):
                 if turn > 0:
                     # Append next user question with prior assistant context.
                     dialogue.append({"role": "user", "content": questions[turn]})
-                log_path = artifact_dir / "server_logs" / f"{mode}_c{conv_id+1}_t{turn+1}.log"
+                log_path = (
+                    artifact_dir
+                    / "server_logs"
+                    / f"{mode}_c{conv_id + 1}_t{turn + 1}.log"
+                )
                 result = run_one_turn(mode, dialogue, log_path)
                 dialogue.append({"role": "assistant", "content": result["response"]})
 
@@ -252,15 +273,20 @@ def main() -> None:
                 total_chars = sum(len(m["content"]) for m in dialogue[:-1])
                 prompt_tokens_approx = total_chars // 4
                 row = {
-                    "mode": mode, "conv": conv_id+1, "turn": turn+1,
+                    "mode": mode,
+                    "conv": conv_id + 1,
+                    "turn": turn + 1,
                     "prompt_tokens_approx": prompt_tokens_approx,
-                    "ttft_ms": result["ttft_ms"], "total_ms": result["total_ms"],
+                    "ttft_ms": result["ttft_ms"],
+                    "total_ms": result["total_ms"],
                     "response_preview": result["response"][:120].replace("\n", " "),
                 }
                 all_rows.append(row)
-                print(f"  turn {turn+1}/{N_TURNS}: ~{prompt_tokens_approx:>5} tokens, "
-                      f"ttft={result['ttft_ms']:>7.1f} ms, total={result['total_ms']:>7.1f} ms")
-            all_conversations[f"{mode}_c{conv_id+1}"] = dialogue
+                print(
+                    f"  turn {turn + 1}/{N_TURNS}: ~{prompt_tokens_approx:>5} tokens, "
+                    f"ttft={result['ttft_ms']:>7.1f} ms, total={result['total_ms']:>7.1f} ms"
+                )
+            all_conversations[f"{mode}_c{conv_id + 1}"] = dialogue
 
     # === artifacts ===
     csv_path = artifact_dir / "per_turn.csv"
@@ -270,36 +296,49 @@ def main() -> None:
         for r in all_rows:
             w.writerow(r)
     (artifact_dir / "conversations.json").write_text(
-        json.dumps(all_conversations, indent=2, ensure_ascii=False))
+        json.dumps(all_conversations, indent=2, ensure_ascii=False)
+    )
 
     # === aggregate ===
     def med(rows, mode, turn=None):
-        vals = [r["ttft_ms"] for r in rows
-                if r["mode"] == mode and r["ttft_ms"]
-                and (turn is None or r["turn"] == turn)]
+        vals = [
+            r["ttft_ms"]
+            for r in rows
+            if r["mode"] == mode
+            and r["ttft_ms"]
+            and (turn is None or r["turn"] == turn)
+        ]
         return statistics.median(vals) if vals else None
 
-    summary = ["# Multi-conversation bench summary\n",
-               f"**Generated:** {ts}\n",
-               f"**Setup:** {N_CONVS} conversations × {N_TURNS} turns, ~{DOC_CHAR_BUDGET//4}-token doc shared across convs,\n"
-               f"max_new_tokens={MAX_NEW_TOKENS}, server restart between every turn (cross-process scenario).\n",
-               "## TTFT median by turn position\n",
-               "| turn | native median (ms) | wombatkv median (ms) | speedup |",
-               "|---|---:|---:|---:|"]
+    summary = [
+        "# Multi-conversation bench summary\n",
+        f"**Generated:** {ts}\n",
+        f"**Setup:** {N_CONVS} conversations × {N_TURNS} turns, ~{DOC_CHAR_BUDGET // 4}-token doc shared across convs,\n"
+        f"max_new_tokens={MAX_NEW_TOKENS}, server restart between every turn (cross-process scenario).\n",
+        "## TTFT median by turn position\n",
+        "| turn | native median (ms) | wombatkv median (ms) | speedup |",
+        "|---|---:|---:|---:|",
+    ]
     for t in range(1, N_TURNS + 1):
         n = med(all_rows, "native", t)
         w = med(all_rows, "wombatkv", t)
         if n and w and w > 0:
-            summary.append(f"| {t} | {n:.0f} | {w:.0f} | {n/w:.1f}× |")
+            summary.append(f"| {t} | {n:.0f} | {w:.0f} | {n / w:.1f}× |")
         else:
             summary.append(f"| {t} | {n} | {w} | — |")
     summary.append("\n## Overall TTFT median\n")
     overall_n = med(all_rows, "native")
     overall_w = med(all_rows, "wombatkv")
-    summary.append(f"- ds4-native: {overall_n:.0f} ms" if overall_n else "- ds4-native: n/a")
-    summary.append(f"- ds4 + WombatKV: {overall_w:.0f} ms" if overall_w else "- ds4 + WombatKV: n/a")
+    summary.append(
+        f"- ds4-native: {overall_n:.0f} ms" if overall_n else "- ds4-native: n/a"
+    )
+    summary.append(
+        f"- ds4 + WombatKV: {overall_w:.0f} ms"
+        if overall_w
+        else "- ds4 + WombatKV: n/a"
+    )
     if overall_n and overall_w and overall_w > 0:
-        summary.append(f"- **Speedup: {overall_n/overall_w:.1f}×**")
+        summary.append(f"- **Speedup: {overall_n / overall_w:.1f}×**")
     (artifact_dir / "summary.md").write_text("\n".join(summary) + "\n")
     print("\n" + "\n".join(summary))
 

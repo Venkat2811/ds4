@@ -9220,10 +9220,14 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
                                                       : max_chain_len;
 
     /* Build SEED. The magic ASCII is tagged with q<bits> to ensure
-     * q2 and q4 chains never share blocks even at the same prompt. */
+     * q2 and q4 chains never share blocks even at the same prompt.
+     * RFC 0011 §C6.7 alpha breaking-window rename: WKVBLK01 → WMBTBLK1.
+     * Existing S3-keyed chain hashes computed under the old domain
+     * separator are abandoned; new chains start fresh under the new
+     * domain. Bucket wipe required before first re-bench. */
     char seed_input[128];
     int sn = snprintf(seed_input, sizeof(seed_input),
-                      "WKVBLK01|%s|q%d|ds4-v1",
+                      "WMBTBLK1|%s|q%d|ds4-v1",
                       g_wmbt_kv_fingerprint ? g_wmbt_kv_fingerprint : "",
                       quant_bits);
     if (sn < 0 || (size_t)sn >= sizeof(seed_input)) return -1;

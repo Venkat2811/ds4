@@ -289,7 +289,15 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  *
  * Returns 0 on success; -1 on error with err populated.
  */
+/* `prompt_tokens_count` is the prompt length to record in the envelope's
+ * `original_total_tokens` field. Callers that save after generation has
+ * extended the live checkpoint past the prompt MUST pass the prompt
+ * length here; otherwise the install path on restore would extend the
+ * checkpoint past the next request's prompt and `ds4_session_sync` would
+ * fall through to a full re-prefill. Pass 0 to use `s->checkpoint.len`
+ * (the legacy behaviour, only correct when save runs at end of prefill). */
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              uint32_t prompt_tokens_count,
                               char *err, size_t errlen);
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the

@@ -148,6 +148,14 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     if (tier_b_enabled && getenv("WMBT_KV_BOOTSTRAP_WORLD") == NULL) {
         setenv("WMBT_KV_BOOTSTRAP_WORLD", "1", 1);
     }
+    /* Align the namespace default between ds4 (C side) and WombatKV
+     * (Rust side) BEFORE init runs `bootstrap_world_knowledge`. Without
+     * this, ds4 saves under `ds4-metal` but the Rust bootstrap scans
+     * the default `"default"` namespace and indexes zero blocks — Tier B
+     * lookups then miss and the load falls back to the slower path. */
+    if (getenv("WMBT_KV_NAMESPACE") == NULL) {
+        setenv("WMBT_KV_NAMESPACE", "ds4-metal", 1);
+    }
     g_wmbt_kv_handle = wmbt_kv_init_from_env();
     if (!g_wmbt_kv_handle) {
         const char *err = wmbt_kv_last_error();
@@ -9772,7 +9780,22 @@ static int wmbt_kv_tier_b_try_load(server *s,
     }
     const double t_post_sidecar = now_sec();
 
-    /* (7) Overlay real token IDs on the placeholder so the upcoming
+    /* (7) If the trailing-token sidecar restored successfully, the
+     * install path extended `s->checkpoint.len` from `matched * block_tokens`
+     * to `original_total_tokens` (the prompt length at save time). Pick
+     * the new length up so the overlay covers the FULL extended range
+     * and ds4_session_sync sees a complete prefix (suffix=0). Without
+     * this, session_sync would re-prefill the trailing partial block
+     * (~1500 ms cost on the cleanup/alpha-prep bench). */
+    if (warm_tail_restored) {
+        const ds4_tokens *live = ds4_session_tokens(s->session);
+        if (live && live->len > loaded_tokens
+            && live->len <= prompt_tokens->len) {
+            loaded_tokens = live->len;
+        }
+    }
+
+    /* Overlay real token IDs on the placeholder so the upcoming
      * ds4_session_sync() sees a perfect common prefix. */
     tier_b_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
 
@@ -9925,13 +9948,25 @@ static bool wmbt_kv_tier_b_save_chain(server *s,
      * re-prefill path on sidecar miss. */
     bool sidecar_put_ok = false;
     size_t sidecar_bytes = 0;
-    if (put_ok) {
+    /* Skip sidecar at shutdown: the live session has been extended by
+     * generated tokens past the prompt boundary, and shutdown's `tokens`
+     * argument is prompt+response. Writing the sidecar here would
+     * overwrite the cold-save's prompt-boundary sidecar with one whose
+     * `original_total_tokens` is too large, causing restore to extend
+     * the new session's checkpoint past the next request's prompt and
+     * triggering a full re-prefill. The cold/continued saves at end of
+     * prefill already wrote the correct sidecar; the block chain content
+     * is identical (idempotent content-addressed PUT) so we just skip
+     * sidecar re-write. */
+    const bool is_shutdown_save = (reason && strcmp(reason, "shutdown") == 0);
+    if (put_ok && !is_shutdown_save) {
         char *sidecar_buf = NULL;
         size_t sidecar_buf_size = 0;
         FILE *sidecar_mem = open_memstream(&sidecar_buf, &sidecar_buf_size);
         if (sidecar_mem) {
             char serr[160] = {0};
             int rc_save = ds4_session_save_raw_tail(s->session, sidecar_mem,
+                                                    (uint32_t)tokens->len,
                                                     serr, sizeof(serr));
             if (rc_save == 0 && fflush(sidecar_mem) == 0) {
                 fclose(sidecar_mem);
@@ -10439,7 +10474,19 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
      * When TIER_B is on but Tier A misses, we fall through to the
      * existing Tier B block at `if (g_wmbt_kv_tier_b && ...)` so the
      * Tier B prefix-share path is preserved. */
-    if (g_wmbt_kv_tier_b && g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+    /* Temporary measurement gate: WMBT_KV_SKIP_TIER_A_PROBE=1 disables
+     * the exact-key (Tier A) G1 probe so the load path falls through
+     * to the Tier B prefix-share block restore. Used to isolate the
+     * Tier B + parallel trailing-token (RFC 0012 Idea 1) cost from
+     * Tier A's single-blob fast path. C4 removes Tier A architecturally;
+     * this env is the measurement scaffold before that lands. */
+    static int g_skip_tier_a_probe = -1;
+    if (g_skip_tier_a_probe == -1) {
+        const char *e = getenv("WMBT_KV_SKIP_TIER_A_PROBE");
+        g_skip_tier_a_probe = (e && e[0] == '1') ? 1 : 0;
+    }
+    if (g_wmbt_kv_tier_b && g_wmbt_kv_replace_local && g_wmbt_kv_handle
+        && !g_skip_tier_a_probe) {
         const double t_enter = now_sec();
         char prompt_sha[41];
         sha1_bytes_hex(prompt_text, prompt_bytes, prompt_sha);
@@ -10515,7 +10562,7 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
      *       prefix shorter than the full prompt. Pays an S3 LIST round-
      *       trip (~30 ms to local MinIO) but only on first-touch or
      *       continued-conversation turns. */
-    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle) {
+    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle && !g_skip_tier_a_probe) {
         const double t_enter = now_sec();
         /* (1) Exact-key probe. */
         char prompt_sha[41];

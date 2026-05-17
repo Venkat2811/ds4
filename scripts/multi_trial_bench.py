@@ -146,6 +146,36 @@ def send_request_ttft(prompt_text: str) -> float:
     return float("nan")
 
 
+def warmup_metal() -> float:
+    """Fire a tiny unrelated request to JIT Metal kernels + warm the model
+    runtime. Returns elapsed ms for telemetry; not used for headline numbers.
+    The bench prompt's cache key is unaffected because the content differs."""
+    payload = json.dumps({
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {"role": "user", "content": "warmup ping"},
+        ],
+        "max_tokens": 1,
+        "temperature": 0.0,
+        "stream": True,
+    }).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{PORT}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    started = time.perf_counter()
+    with urllib.request.urlopen(req) as resp:
+        for raw in resp:
+            line = raw.decode(errors="replace").strip()
+            if line.startswith("data:"):
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                for _ in resp:
+                    pass
+                return elapsed_ms
+    return float("nan")
+
+
 def run_trial(mode: str, prompt_text: str, trial: int) -> tuple[float, float]:
     """Return (turn1_ttft, turn2_ttft) for a single trial."""
     kill_servers()
@@ -157,6 +187,10 @@ def run_trial(mode: str, prompt_text: str, trial: int) -> tuple[float, float]:
     # Wipe kvdisk between turns (same as demo_wombatkv.sh).
     subprocess.run(["rm", "-rf", f"/tmp/multibench-ds4-{mode}"])
     start_server(mode, log2)
+    # Warm Metal kernels with a tiny unrelated request so turn-2 measures
+    # steady-state restore + decode, not first-forward-pass JIT noise.
+    warm_ms = warmup_metal()
+    print(f"    warmup={warm_ms:.0f} ms (Metal JIT primed)")
     t2 = send_request_ttft(prompt_text)
     kill_servers()
     return t1, t2

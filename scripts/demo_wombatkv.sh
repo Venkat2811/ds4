@@ -51,11 +51,19 @@ start_server() {
     )
   fi
 
-  ( cd "$DS4_DIR" && env "${env_overrides[@]}" "$DS4_BIN" \
+  # NOTE: `pid=$(start_server ...)` runs this function inside a command
+  # substitution. A nested `(... > log 2>&1) &` keeps the cmd-sub pipe
+  # open through the backgrounded subshell's inherited fds, which makes
+  # the parent's `$(...)` hang forever waiting for EOF. Fix: explicit
+  # `</dev/null` + `nohup` so the ds4-server child has zero references
+  # to the captured pipe.
+  cd "$DS4_DIR" || { echo "FAILED: cd $DS4_DIR" >&2; return 1; }
+  nohup env "${env_overrides[@]}" "$DS4_BIN" \
       --model "$MODEL" --ctx 32768 --kv-disk-dir "$kvdir" \
       --kv-cache-min-tokens 256 --kv-disk-space-mb 16384 --port "$PORT" \
-      > "$logfile" 2>&1 ) &
+      > "$logfile" 2>&1 </dev/null &
   local pid=$!
+  disown 2>/dev/null || true
   for i in $(seq 1 90); do
     grep -q "listening on http" "$logfile" 2>/dev/null && { sleep 0.5; echo "$pid"; return 0; }
     sleep 1

@@ -50,11 +50,6 @@ static volatile sig_atomic_t g_listen_fd = -1;
 static wmbt_kv_handle_t *g_wmbt_kv_handle = NULL;
 static char *g_wmbt_kv_namespace = NULL;
 static char *g_wmbt_kv_fingerprint = NULL;
-/* Phase 3: when this is set, ds4 stops writing .kv files to
- * --kv-disk-dir entirely. All saves go directly to WombatKV via
- * open_memstream + wmbt_kv_put_kv; all loads come from
- * wmbt_kv_list_kv_keys + wmbt_kv_get_kv_borrowed + in-memory parse. */
-static int g_wmbt_kv_replace_local = 0;
 /* Tier B: when set, ds4 saves/loads a CHAIN of fixed-size content-
  * addressed blocks via the block-shaped WombatKV C ABI
  * (wmbt_kv_lookup_block_prefix / get_kv_blocks_borrowed / put_kv_blocks).
@@ -170,7 +165,6 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     const char *ns = getenv("WMBT_KV_NAMESPACE");
     g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");
     g_wmbt_kv_fingerprint = xstrdup(fp);
-    g_wmbt_kv_replace_local = 1;
     /* Tier B (block-chain) is DEFAULT-ON in 0.1.0-alpha. Caller can opt
      * out with WMBT_KV_TIER_B=0. WMBT_KV_TIER_B_BLOCK_TOKENS overrides
      * the default block granularity (must be a positive multiple of 128;
@@ -9385,30 +9379,6 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
 
 #ifdef DS4_WOMBATKV
 /* ================================================================== *
- * Phase 3: WombatKV is the only cache (no local .kv-disk writes).
- *
- * Placed AFTER all kv_*-helpers (`kv_read_header`, `byte_prefix_match`,
- * `build_prompt_from_exact_prefix_and_text_suffix`, `kv_tool_map_*`)
- * and the `kv_entry` / `server` / `stop_list` typedefs so we don't
- * need forward declarations.
- *
- * Key schema v2:
- *     wombatkv/ds4/v2/model=<fp24>/bytes=<text_bytes:010>/sha1=<sha>-q<q>
- * `bytes=` is the byte length of the cached rendered text (NOT the
- * token count) — matches ds4's prefix-by-bytes contract.
- * ================================================================== */
-
-#define WMBT_KV_V2_KEY_PREFIX "wombatkv/ds4/v2"
-
-static int wmbt_kv_v2_key(char *out, size_t out_cap, uint32_t text_bytes,
-                       const char *sha, int quant_bits) {
-    int n = snprintf(out, out_cap, "%s/model=%s/bytes=%010u/sha1=%s-q%d",
-                     WMBT_KV_V2_KEY_PREFIX, g_wmbt_kv_fingerprint,
-                     (unsigned)text_bytes, sha, quant_bits);
-    return (n > 0 && (size_t)n < out_cap) ? n : -1;
-}
-
-/* ================================================================== *
  * Tier B: content-addressed block chain (RFC 0007 §4).
  *
  * The chain is a sequence of 64-char lower-hex strings, one per fixed-
@@ -9516,59 +9486,6 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
         prev_hex = o;
     }
     return n_blocks;
-}
-
-/* Build the full .kv-format payload in memory (header + textlen + text
- * + ds4_session payload + optional tool map) and PUT it to WombatKV.
- * Returns true on success; on failure `err` is populated. */
-static bool wmbt_kv_store_live_prefix_to_wombatkv(
-    server *s, const uint8_t *header_bytes, size_t header_len,
-    const uint8_t *text_len_bytes, size_t text_len_len,
-    const char *text, size_t text_len, const char *sha, int quant_bits,
-    const char *reason, char *err, size_t errlen) {
-    char *buf = NULL;
-    size_t buf_size = 0;
-    FILE *mem = open_memstream(&buf, &buf_size);
-    if (!mem) {
-        snprintf(err, errlen, "open_memstream failed: %s", strerror(errno));
-        return false;
-    }
-    bool ok = fwrite(header_bytes, 1, header_len, mem) == header_len &&
-              fwrite(text_len_bytes, 1, text_len_len, mem) == text_len_len &&
-              fwrite(text, 1, text_len, mem) == text_len &&
-              ds4_session_save_payload(s->session, mem, err, errlen) == 0;
-    uint64_t tool_map_bytes = 0;
-    if (ok) {
-        ok = kv_tool_map_write(s, mem, text, &tool_map_bytes) &&
-             fflush(mem) == 0;
-    }
-    if (fclose(mem) != 0) ok = false;
-    if (!ok) {
-        free(buf);
-        return false;
-    }
-    char wkey[320];
-    if (wmbt_kv_v2_key(wkey, sizeof(wkey), (uint32_t)text_len, sha,
-                    quant_bits) < 0) {
-        snprintf(err, errlen, "WombatKV v2 key too long");
-        free(buf);
-        return false;
-    }
-    int64_t rc = wmbt_kv_put_kv(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
-                             (const uint8_t *)buf, buf_size);
-    if (rc < 0) {
-        const char *terr = wmbt_kv_last_error();
-        snprintf(err, errlen, "wmbt_kv_put_kv failed (%s): %s", reason,
-                 terr ? terr : "(unknown)");
-        free(buf);
-        return false;
-    }
-    fprintf(stderr,
-            "ds4-server: WombatKV store reason=%s text_bytes=%zu size=%zu "
-            "key=%s\n",
-            reason, text_len, buf_size, wkey);
-    free(buf);
-    return true;
 }
 
 
@@ -10199,55 +10116,6 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
         wmbt_kv_tier_b_save_chain(s, &store_tokens, reason);
         /* Note: never propagate failure — the v2 path is still our
          * authoritative store while Tier B is alpha. */
-    }
-    /* Phase 3 Path X: skip local disk entirely. We still build a real
-     * .kv-format buffer (header + textlen + text + payload + tool map)
-     * in memory and PUT it under the v2 key — readers (incl. peers and
-     * future restarts) reconstruct via fmemopen the same way the local
-     * path would have via fopen.
-     *
-     * C4: gated off by default (mirrors load-side gating above). Tier B
-     * blocks are now the authoritative WombatKV state path; the legacy
-     * monolithic sha1(prompt_text)-keyed save is wasted storage. Opt
-     * back in via `WMBT_KV_ENABLE_TIER_A=1` for emergency rollback. */
-    static int g_save_skip_tier_a = -1;
-    if (g_save_skip_tier_a == -1) {
-        const char *e = getenv("WMBT_KV_ENABLE_TIER_A");
-        g_save_skip_tier_a = (e && e[0] == '1') ? 0 : 1;
-    }
-    if (g_wmbt_kv_replace_local && g_wmbt_kv_handle && !g_save_skip_tier_a) {
-        const uint64_t now = (uint64_t)time(NULL);
-        uint8_t h[KV_CACHE_FIXED_HEADER];
-        uint8_t ext_flags = tool_memory_count_dsml_in_text(s, text) > 0
-                                ? KV_EXT_TOOL_MAP : 0;
-        kv_fill_header(h, (uint8_t)quant_bits, kv_reason_code(reason),
-                       ext_flags, (uint32_t)store_tokens.len, 0,
-                       (uint32_t)ds4_session_ctx(s->session), now, now,
-                       payload_bytes);
-        uint8_t tb[4];
-        le_put32(tb, (uint32_t)text_len);
-        char terr[160] = {0};
-        const double save_t0 = now_sec();
-        const int saved_tokens = store_tokens.len;
-        const int trimmed = original_len - store_tokens.len;
-        bool ok = wmbt_kv_store_live_prefix_to_wombatkv(
-            s, h, sizeof(h), tb, sizeof(tb), text, text_len, sha,
-            quant_bits, reason, terr, sizeof(terr));
-        const double save_ms = (now_sec() - save_t0) * 1000.0;
-        if (ok) {
-            server_log(DS4_LOG_KVCACHE,
-                       "ds4-server: WombatKV replace store tokens=%d trimmed=%d "
-                       "reason=%s save=%.1f ms",
-                       saved_tokens, trimmed, reason, save_ms);
-        } else {
-            server_log(DS4_LOG_KVCACHE,
-                       "ds4-server: WombatKV replace store FAILED (%s): %s "
-                       "save=%.1f ms",
-                       reason, terr, save_ms);
-        }
-        free(text);
-        ds4_tokens_free(&store_tokens);
-        return ok;
     }
 #endif
 

@@ -9815,6 +9815,30 @@ static void tier_b_overlay_real_token_ids(ds4_session *sess,
     memcpy(dst, prompt_tokens->v, (size_t)loaded_tokens * sizeof(int));
 }
 
+/* RFC 0012 Idea 1: parallel trailing-token (raw_tail) fetch. The
+ * trailing-token sidecar GET runs in this worker thread concurrently
+ * with the block GET batch in the main thread; we join just before
+ * installing the sidecar into the session. Saves ~30 ms by hiding
+ * the sidecar's S3 RTT under the block fetch's RTT. */
+typedef struct {
+    const char *chain_hex_tip;
+    const uint8_t *st_ptr;
+    size_t st_len;
+    wmbt_kv_borrow_t *st_borrow;
+    char st_err[160];
+    int32_t rc_st;
+} ds4_parallel_tail_arg;
+
+static void *ds4_parallel_tail_fetch(void *p) {
+    ds4_parallel_tail_arg *a = (ds4_parallel_tail_arg *)p;
+    a->rc_st = wmbt_kv_get_raw_tail_borrowed(
+        g_wmbt_kv_handle, g_wmbt_kv_namespace,
+        a->chain_hex_tip,
+        &a->st_ptr, &a->st_len, &a->st_borrow,
+        a->st_err, sizeof(a->st_err));
+    return NULL;
+}
+
 /* Try to load a content-addressed block-chain prefix from WombatKV.
  * Returns:
  *    >0   number of prefix tokens installed into the session
@@ -9875,6 +9899,23 @@ static int wmbt_kv_tier_b_try_load(server *s,
     }
     if ((int)matched > n_blocks) matched = (size_t)n_blocks;
 
+    /* (2b) Spawn parallel trailing-token fetch (RFC 0012 Idea 1).
+     * The trailing-token sidecar GET overlaps with the block GETs
+     * below, hiding ~30 ms of S3 RTT. We join just before the
+     * sidecar install at the end. */
+    pthread_t tail_thread;
+    ds4_parallel_tail_arg tail_arg = {
+        .chain_hex_tip = chain_hex[matched - 1],
+        .st_ptr = NULL,
+        .st_len = 0,
+        .st_borrow = NULL,
+        .rc_st = 0,
+    };
+    tail_arg.st_err[0] = '\0';
+    int tail_spawned =
+        (pthread_create(&tail_thread, NULL,
+                        ds4_parallel_tail_fetch, &tail_arg) == 0);
+
     /* (3) get_kv_blocks_borrowed for the matched prefix. */
     const uint8_t **payload_ptrs = NULL;
     const size_t  *payload_lens = NULL;
@@ -9886,6 +9927,10 @@ static int wmbt_kv_tier_b_try_load(server *s,
     const double t_post_get = now_sec();
     if (rc_get != 1 || !payload_ptrs || !payload_lens) {
         if (borrow) wmbt_kv_release_borrow(borrow);
+        if (tail_spawned) {
+            pthread_join(tail_thread, NULL);
+            if (tail_arg.st_borrow) wmbt_kv_release_borrow(tail_arg.st_borrow);
+        }
         const char *err = wmbt_kv_last_error();
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
@@ -9931,6 +9976,10 @@ static int wmbt_kv_tier_b_try_load(server *s,
 
     if (loaded_tokens <= 0) {
         ds4_session_invalidate(s->session);
+        if (tail_spawned) {
+            pthread_join(tail_thread, NULL);
+            if (tail_arg.st_borrow) wmbt_kv_release_borrow(tail_arg.st_borrow);
+        }
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
                 "\"result\":\"load_blocks_err\",\"matched\":%zu,"
@@ -9939,11 +9988,9 @@ static int wmbt_kv_tier_b_try_load(server *s,
         return 0;
     }
 
-    /* (6b) RFC 0007 §10.P5 raw-tail sidecar GET. The sidecar is keyed
-     * by the chain-tip hash of the matched prefix — chain[matched-1].
-     * Because the chain hashes are content-addressed and
-     * matched-position-dependent, the same chain[matched-1] is produced
-     * for any prompt sharing the first `matched * block_tokens` tokens.
+    /* (6b) Trailing-token sidecar (RFC 0007 §10.P5). The sidecar is
+     * keyed by chain[matched-1], so the same chain-tip is produced for
+     * any prompt sharing the first `matched * block_tokens` tokens.
      * A hit means the producer wrote a sidecar at this exact tip; we
      * install the raw bytes into the SWA ring and the downstream
      * session_sync() can skip the suffix re-prefill of the last
@@ -9951,22 +9998,18 @@ static int wmbt_kv_tier_b_try_load(server *s,
      *
      * Failure here is non-fatal — the block load already succeeded;
      * the engine falls back to the v1 behaviour where session_sync
-     * re-prefills the trailing window. */
+     * re-prefills the trailing window.
+     *
+     * The fetch was spawned at (2b) and ran in parallel with the block
+     * GET; we just join here and install the bytes. RFC 0012 Idea 1. */
     int warm_tail_restored = 0;
-    {
-        const uint8_t *st_ptr = NULL;
-        size_t st_len = 0;
-        wmbt_kv_borrow_t *st_borrow = NULL;
-        char st_err[160] = {0};
-        int32_t rc_st = wmbt_kv_get_raw_tail_borrowed(
-            g_wmbt_kv_handle, g_wmbt_kv_namespace,
-            chain_hex[matched - 1],
-            &st_ptr, &st_len, &st_borrow,
-            st_err, sizeof(st_err));
-        if (rc_st == 1 && st_ptr && st_len > 0) {
+    if (tail_spawned) {
+        pthread_join(tail_thread, NULL);
+        if (tail_arg.rc_st == 1 && tail_arg.st_ptr && tail_arg.st_len > 0) {
             char inst_err[160] = {0};
             int rc_install = ds4_session_install_raw_tail(
-                s->session, st_ptr, st_len, inst_err, sizeof(inst_err));
+                s->session, tail_arg.st_ptr, tail_arg.st_len,
+                inst_err, sizeof(inst_err));
             if (rc_install == 0) {
                 warm_tail_restored = 1;
             } else {
@@ -9976,14 +10019,33 @@ static int wmbt_kv_tier_b_try_load(server *s,
                         "\"err\":\"%s\"}\n",
                         inst_err[0] ? inst_err : "(no message)");
             }
-        } else if (rc_st == -1) {
+        } else if (tail_arg.rc_st == -1) {
             fprintf(stderr,
                     "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
                     "\"sidecar\":\"get_err\","
                     "\"err\":\"%s\"}\n",
-                    st_err[0] ? st_err : "(no message)");
+                    tail_arg.st_err[0] ? tail_arg.st_err : "(no message)");
         }
         /* rc_st == 0 is a miss: caller falls back; no log noise. */
+        if (tail_arg.st_borrow) wmbt_kv_release_borrow(tail_arg.st_borrow);
+    } else {
+        /* pthread_create failed; fall back to serial fetch. Rare. */
+        const uint8_t *st_ptr = NULL;
+        size_t st_len = 0;
+        wmbt_kv_borrow_t *st_borrow = NULL;
+        char st_err[160] = {0};
+        int32_t rc_st = wmbt_kv_get_raw_tail_borrowed(
+            g_wmbt_kv_handle, g_wmbt_kv_namespace,
+            chain_hex[matched - 1],
+            &st_ptr, &st_len, &st_borrow, st_err, sizeof(st_err));
+        if (rc_st == 1 && st_ptr && st_len > 0) {
+            char inst_err[160] = {0};
+            if (ds4_session_install_raw_tail(
+                    s->session, st_ptr, st_len,
+                    inst_err, sizeof(inst_err)) == 0) {
+                warm_tail_restored = 1;
+            }
+        }
         if (st_borrow) wmbt_kv_release_borrow(st_borrow);
     }
     const double t_post_sidecar = now_sec();

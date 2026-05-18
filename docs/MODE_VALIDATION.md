@@ -102,9 +102,9 @@ What the script validates for cross-machine TCP:
 4. **Bucket** — set on the daemon side. The engine side knows
    nothing about S3 in mode 4.
 
-## Last alpha.6 validation results (M3 Max, 2026-05-18)
+## Last alpha.6 validation results (M3 Max + venkat-pc Ubuntu 22.04, 2026-05-18)
 
-Same-host matrix (`scripts/mode_smoke.py all`):
+Same-host matrix (`scripts/mode_smoke.py all` on Mac):
 
 | mode | turn-1 | turn-2 | speedup | S3 objects |
 |---|---:|---:|---:|---:|
@@ -115,8 +115,33 @@ Same-host matrix (`scripts/mode_smoke.py all`):
 
 ds4_test `--server` with each mode's WombatKV env: PASS in all 4.
 
-Cross-machine TCP (daemon on venkat-pc, engine on Mac): not yet
-run; the recipe above is the procedure.
+Cross-machine TCP (`mode_smoke.py daemon-tcp-remote`) — Mac
+ds4-server (M3 Max) connecting to a wombatkv-daemon on venkat-pc
+(Ubuntu 22.04, x86_64) over LAN at `192.168.2.103:7878`, daemon's
+S3 backing on venkat-pc-local MinIO:
+
+| direction | turn-1 cold | turn-2 warm | speedup | blocks in venkat-pc S3 |
+|---|---:|---:|---:|---:|
+| Mac engine → venkat-pc daemon → venkat-pc S3 | 42203 ms | 6757 ms | 6.25× | 12 |
+
+Confirmation signals on the venkat-pc side after the smoke:
+- daemon log shows 3 TCP `accepted` events from peer `192.168.2.102`
+  (Mac's LAN IP), one per ds4-server lifecycle (start, turn-1
+  request, restart-and-turn-2).
+- `wombatkv-xhost-smoke` bucket has 12 objects, keys formatted
+  `kv/puffer-shm/ds4-metal/wombatkv/v1/block/b3=<hex>` — the
+  canonical block-prefix content-address scheme. No SHM artifacts
+  on either side (TCP-only daemon).
+- SlateDB metadata index hydrated 0 blocks at boot (fresh dir),
+  then populated through the turn-1 writes; turn-2 lookup hit the
+  hot index.
+
+Linux-side tests at the same v0.1.0-alpha.6 commit:
+
+| suite | result | wall time |
+|---|---|---:|
+| `cargo test --workspace --lib --release` | **208/208 PASS** | 44 s |
+| `scripts/dst-sweep.sh --seeds 1-10` (7 failure classes × 10 seeds) | **70/70 PASS** | 0.21 s |
 
 ## CONTRIBUTING.md correctness suite — what was run
 

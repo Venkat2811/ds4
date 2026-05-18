@@ -134,7 +134,9 @@ def start_server(mode: str, logfile: Path) -> int:
     raise RuntimeError(f"server failed to start; see {logfile}")
 
 
-def send_request_ttft(prompt_text: str) -> float:
+def send_request_ttft(prompt_text: str) -> tuple[float, str, str]:
+    """Returns (ttft_ms, content_text, reasoning_text). DSV4-Flash streams
+    `reasoning_content` (CoT) BEFORE `content` (final answer)."""
     payload = json.dumps(
         {
             "model": "deepseek-v4-flash",
@@ -156,16 +158,29 @@ def send_request_ttft(prompt_text: str) -> float:
         headers={"Content-Type": "application/json"},
     )
     started = time.perf_counter()
+    ttft_ms = float("nan")
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     with urllib.request.urlopen(req) as resp:
         for raw in resp:
             line = raw.decode(errors="replace").strip()
-            if line.startswith("data:"):
+            if not line.startswith("data:"):
+                continue
+            if ttft_ms != ttft_ms:
                 ttft_ms = (time.perf_counter() - started) * 1000.0
-                # drain rest of stream
-                for _ in resp:
-                    pass
-                return ttft_ms
-    return float("nan")
+            payload_str = line[5:].strip()
+            if payload_str == "[DONE]":
+                continue
+            try:
+                ev = json.loads(payload_str)
+                delta = ev.get("choices", [{}])[0].get("delta", {})
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning_parts.append(delta["reasoning_content"])
+            except (json.JSONDecodeError, IndexError, KeyError):
+                pass
+    return ttft_ms, "".join(content_parts), "".join(reasoning_parts)
 
 
 def warmup_metal() -> float:
@@ -200,44 +215,47 @@ def warmup_metal() -> float:
     return float("nan")
 
 
-def run_trial(mode: str, prompt_text: str, trial: int) -> tuple[float, float]:
-    """Return (turn1_ttft, turn2_ttft) for a single trial."""
+def run_trial(mode: str, prompt_text: str, trial: int) -> tuple[float, float, str, str]:
+    """Return (turn1_ttft, turn2_ttft, turn2_content, turn2_reasoning)."""
     kill_servers()
     log1 = Path(f"/tmp/multibench-{mode}-trial{trial}-turn1.log")
     log2 = Path(f"/tmp/multibench-{mode}-trial{trial}-turn2.log")
     start_server(mode, log1)
-    t1 = send_request_ttft(prompt_text)
+    t1, _, _ = send_request_ttft(prompt_text)
     kill_servers()
-    # Wipe kvdisk between turns (same as demo_wombatkv.sh).
     subprocess.run(["rm", "-rf", f"/tmp/multibench-ds4-{mode}"])
     start_server(mode, log2)
-    # Warm Metal kernels with a tiny unrelated request so turn-2 measures
-    # steady-state restore + decode, not first-forward-pass JIT noise.
     warm_ms = warmup_metal()
     print(f"    warmup={warm_ms:.0f} ms (Metal JIT primed)")
-    t2 = send_request_ttft(prompt_text)
+    t2, content, reasoning = send_request_ttft(prompt_text)
     kill_servers()
-    return t1, t2
+    return t1, t2, content, reasoning
 
 
 def main():
     if not PROMPT_FILE.exists():
         sys.exit(f"FATAL: prompt file missing: {PROMPT_FILE}")
-    prompt_text = PROMPT_FILE.read_bytes()[:5200].decode(errors="replace")
+    prompt_chars = int(os.environ.get("PROMPT_CHARS", "5200"))
+    prompt_text = PROMPT_FILE.read_bytes()[:prompt_chars].decode(errors="replace")
+    print(f"\n[prompt slice: {len(prompt_text)} chars ≈ {len(prompt_text)//4} tokens estimate]")
 
-    results = {"native": [], "wombatkv": []}
-    # Interleave the two modes per trial so each measurement pair sees the same
-    # system state — same disk-cache warmth, same MinIO load, same thermal,
-    # same memory pressure. Avoids the previous run-all-native-then-all-wombatkv
-    # ordering that gave the second mode a stale-cache advantage / disadvantage.
+    results: dict[str, list] = {"native": [], "wombatkv": []}
+    outputs: dict[str, list] = {"native": [], "wombatkv": []}
     print(f"\n=== interleaved {N_TRIALS}-trial bench (native + wombatkv per trial) ===")
     for trial in range(1, N_TRIALS + 1):
         print(f"\n  trial {trial}/{N_TRIALS}:")
         for mode in ("native", "wombatkv"):
             wipe_minio()
-            t1, t2 = run_trial(mode, prompt_text, trial)
+            t1, t2, content, reasoning = run_trial(mode, prompt_text, trial)
             print(f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)")
             results[mode].append((t1, t2))
+            outputs[mode].append({
+                "trial": trial,
+                "content_chars": len(content),
+                "reasoning_chars": len(reasoning),
+                "content_head": content[:160],
+                "reasoning_head": reasoning[:160],
+            })
 
     print("\n===== RESULTS =====")
     for mode in ("native", "wombatkv"):
@@ -261,6 +279,18 @@ def main():
         print(
             f"\n  CELL B SPEEDUP (median turn-2 native / median turn-2 wombatkv): {nat_t2 / wmbt_t2:.1f}x"
         )
+
+    # Output coherence check.
+    print("\n===== TURN-2 OUTPUT COHERENCE =====")
+    for mode in ("native", "wombatkv"):
+        print(f"\n[{mode}]")
+        for o in outputs[mode]:
+            print(f"  trial {o['trial']}: content={o['content_chars']} chars, "
+                  f"reasoning={o['reasoning_chars']} chars")
+            if o['reasoning_head']:
+                print(f"    reasoning_head: {o['reasoning_head']!r}")
+            if o['content_head']:
+                print(f"    content_head:   {o['content_head']!r}")
 
 
 if __name__ == "__main__":

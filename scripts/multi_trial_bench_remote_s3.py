@@ -25,7 +25,7 @@ DS4_BIN = DS4_DIR / "ds4-server"
 MODEL = "gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf"
 PROMPT_FILE = Path("/tmp/pg1184.txt")
 PORT = 8000
-N_TRIALS = 3
+N_TRIALS = int(os.environ.get("N_TRIALS", "5"))
 
 import boto3
 import urllib.request
@@ -226,15 +226,17 @@ def main():
     prompt_text = PROMPT_FILE.read_bytes()[:5200].decode(errors="replace")
 
     results = {"native": [], "wombatkv": []}
-    for mode in ("native", "wombatkv"):
-        print(f"\n=== {mode} mode ({N_TRIALS} trials) ===")
-        for trial in range(1, N_TRIALS + 1):
-            # Wipe MinIO between trials so each turn-1 is a true cold S3 state.
+    # Interleave the two modes per trial so each measurement pair sees the same
+    # system state — same disk-cache warmth, same MinIO load, same thermal,
+    # same memory pressure. Avoids the previous run-all-native-then-all-wombatkv
+    # ordering that gave the second mode a stale-cache advantage / disadvantage.
+    print(f"\n=== interleaved {N_TRIALS}-trial bench (native + wombatkv per trial) ===")
+    for trial in range(1, N_TRIALS + 1):
+        print(f"\n  trial {trial}/{N_TRIALS}:")
+        for mode in ("native", "wombatkv"):
             wipe_minio()
             t1, t2 = run_trial(mode, prompt_text, trial)
-            print(
-                f"  trial {trial}/{N_TRIALS}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)"
-            )
+            print(f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)")
             results[mode].append((t1, t2))
 
     print("\n===== RESULTS =====")

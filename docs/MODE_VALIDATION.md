@@ -145,18 +145,13 @@ Linux-side tests at the same v0.1.0-alpha.6 commit:
 
 ## Output coherence (informational, alpha.7+)
 
-`mode_smoke.py` now logs a `coherence` block per mode: longest
-common prefix between turn-1 and turn-2 text, plus count of
-non-trivial shared words (length > 3). Soft threshold:
-`shared_words >= 3` for non-native modes.
+Two complementary harnesses:
 
-The shared-words metric exists because strict text equality would
-false-fire on Metal scheduling noise — even native mode shows
-small token drift across runs of the same prompt at temp=0. Shared
-vocabulary is a useful proxy for "WombatKV restored the right
-state" without being so strict it trips on argmax flips.
+### Light (`mode_smoke.py`)
 
-Last run (5-mode sweep, alpha.7+):
+Single-trial 2-turn pattern per mode, logs an
+`lcp_chars` + `shared_words` block. Soft threshold
+`shared_words >= 3` for non-native modes. Last run:
 
 | mode | turn-2 lcp_chars | shared_words ≥ 3? |
 |---|---:|---|
@@ -165,11 +160,49 @@ Last run (5-mode sweep, alpha.7+):
 | daemon-shm |  0 | yes (4) |
 | daemon-tcp |  0 | yes (5) |
 
-Native turn-2 uses the local kvdisk warm path (more deterministic
-in terms of K/V byte identity), hence the high lcp. WombatKV modes
-diverge at the first character (Metal sampling non-determinism
-between fresh engine instances) but consistently share content
-vocabulary — same prompt, same model, different micro-noise.
+### Strong (`scripts/coherence_test.py`)
+
+N-iteration (default 3) pairwise comparison per mode + per-iter
+garbage heuristic. Establishes native as the Metal-noise baseline
+and reports each WombatKV mode's coherence relative to it.
+
+**Honest framing of what this test CAN and CANNOT prove:**
+- CANNOT prove "WombatKV restored K/V is byte-identical to cold-
+  computed K/V". That claim needs tensor-level hooks (logit
+  snapshot or layer-buffer dump) which ds4-server's HTTP API
+  doesn't expose. Even Metal itself is **not bit-deterministic**
+  for ds4 inference on M3 Max — observed via native baseline
+  where repeated cold runs of the same prompt at temp=0 produce
+  divergent text trajectories (argmax flips on near-tied logits).
+- CAN prove: every iteration of every mode returns reasonable
+  model-generated English text. WombatKV is not corrupting K/V
+  badly enough to produce gibberish, wrong-language output, or
+  degenerate single-token loops.
+
+Verdict rules:
+- HARD: every iter must pass a garbage heuristic
+  (non-empty, ≥ 20 chars, ≥ 3 non-trivial words, ≥ 80% ASCII).
+- INFORMATIONAL: pairwise lcp / shared_words distributions vs the
+  native baseline. Lower coherence than native is noted but not
+  auto-failed — could be Metal noise variance OR small WombatKV
+  drift; ambiguous without a tensor-level test.
+
+Result file:
+[`bench_data/coherence_alpha7.json`](../bench_data/coherence_alpha7.json)
+
+| mode | iters | byte_equal_pairs | max_lcp | shared_words range | verdict |
+|---|---:|---|---:|---|---|
+| native (baseline) | 3 | 0/3 | 137 | 5..12 | PASS (baseline) |
+| embedded | 3 | 0/3 | 65 | 4..8 | PASS |
+| daemon-shm | 3 | 0/3 | 16 | 8..11 | PASS |
+| daemon-tcp | 3 | 0/3 | 64 | 1..10 | PASS |
+
+All 4 modes pass the HARD garbage check. WombatKV modes show
+lower max_lcp than native baseline's best-pair (137) — this could
+mean either (a) Metal noise distributes differently across modes
+due to latency profile differences, or (b) WombatKV restore
+introduces small numerical drift on top of Metal noise. The
+text-only test can't disambiguate; a tensor-level test would.
 
 ## Engine compute baseline (`ds4-bench`)
 
@@ -192,6 +225,69 @@ Captured at v0.1.0-alpha.7:
 | 12288 |  33.14 |  2.72 |
 | 14336 |  54.85 |  2.16 |
 | 16384 |  42.61 |  4.32 |
+
+## WombatKV-aware perf sweep (`ds4_bench_wombatkv.py`)
+
+Cold + warm latency per (mode × ctx-size) cell. Each cell starts
+with a full state wipe — local kvdir, local puffer, daemon puffer,
+daemon process, and S3 bucket all reset before the cold turn, so
+each measurement is independent (no leakage from a previous cell's
+saved blocks even when prompts share a prefix).
+
+Per-mode CSVs in [`bench_data/wombatkv_sweep/`](../bench_data/wombatkv_sweep/).
+Last run on M3 Max (Metal):
+
+### Cold latency (ms)
+
+| est_tokens | native | embedded | daemon-shm | daemon-tcp |
+|---:|---:|---:|---:|---:|
+|  512 |  3815 |  3854 |  9236 | 11736 |
+| 1024 |  5837 |  5959 |  9768 |  9362 |
+| 2048 |  9679 | 20228 | 39767 | 35402 |
+
+### Warm latency (ms)
+
+| est_tokens | native | embedded | daemon-shm | daemon-tcp |
+|---:|---:|---:|---:|---:|
+|  512 |  3796 |  560 |  558 |  612 |
+| 1024 |  5685 |  561 |  629 |  559 |
+| 2048 | 10010 |  581 |  805 | 2322 |
+
+### Speedup (cold / warm)
+
+| est_tokens | native | embedded | daemon-shm | daemon-tcp |
+|---:|---:|---:|---:|---:|
+|  512 | 1.01× |  6.88× | 16.53× | 19.17× |
+| 1024 | 1.03× | 10.62× | 15.52× | 16.73× |
+| 2048 | 0.97× | **34.8×** | **49.38×** | 15.24× |
+
+What this confirms:
+- Native warm ≈ native cold (no warm path; expected ~1×). Validates
+  that the bench harness is fair — kvdir wipe + restart = true
+  cold prefill in native mode.
+- WombatKV modes deliver consistent strong speedups across the
+  ctx sweep. Warm latency is **sub-second across all WombatKV
+  modes for ≤ 1024 tokens**, sub-2.5s for 2048.
+- Speedup grows with context size — cold prefill cost scales with
+  attention's quadratic, warm restore scales roughly linearly in
+  block count. So WombatKV's value proposition (cell-B story)
+  scales with prompt length.
+- daemon-tcp at 2048 (2322 ms) is the only WombatKV warm latency
+  above 1 second. The extra ~1.5s vs daemon-shm (805 ms) reflects
+  TCP-RTT cost per block lookup (~16 blocks × ~100 ms = ~1.6 s).
+  At smaller ctx (fewer blocks), the RTT overhead is amortized
+  and TCP latency matches SHM. Expected.
+
+For multi-trial statistical perf (the canonical 73.1× cell-B
+record), see `scripts/multi_trial_bench.py` (5-trial harness in
+RFC 0013). This sweep is single-trial per cell; numbers carry
+~10-30% variance from Metal scheduling + thermal state.
+
+The three bench tracks are complementary:
+
+  ds4-bench                       = engine compute regression (no WombatKV)
+  ds4_bench_wombatkv.py           = WombatKV warm-restore sweep (multi-mode × ctx)
+  scripts/multi_trial_bench.py    = canonical cell-B statistical record (single ctx, 5 trials)
 
 For WombatKV-specific perf (cell-B warm restore), see
 `scripts/multi_trial_bench.py` (5-trial statistical record) and

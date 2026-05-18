@@ -151,7 +151,18 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     if (getenv("WMBT_KV_NAMESPACE") == NULL) {
         setenv("WMBT_KV_NAMESPACE", "ds4-metal", 1);
     }
-    g_wmbt_kv_handle = wmbt_kv_init_from_env();
+    /* Cross-machine: DS4_WOMBATKV_DAEMON_TCP=<host:port> routes ds4 to
+     * a wombatkv-daemon on another host over TCP instead of opening
+     * an in-process embedded store (or the SHM daemon path). The
+     * daemon owns the foyer + S3 backing; this ds4 process just
+     * shuttles WireRequest frames over a length-prefixed rkyv envelope.
+     * See RFC 0014 + crates/wombatkv-daemon/src/tcp_transport.rs. */
+    const char *tcp_addr = getenv("DS4_WOMBATKV_DAEMON_TCP");
+    if (tcp_addr && tcp_addr[0]) {
+        g_wmbt_kv_handle = wmbt_kv_open_tcp(tcp_addr);
+    } else {
+        g_wmbt_kv_handle = wmbt_kv_init_from_env();
+    }
     if (!g_wmbt_kv_handle) {
         const char *err = wmbt_kv_last_error();
         fprintf(stderr,

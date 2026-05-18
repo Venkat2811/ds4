@@ -196,41 +196,13 @@ static void wmbt_kv_shutdown_hooks(void) {
     g_wmbt_kv_fingerprint = NULL;
 }
 
-/* Read the freshly-written .kv file and PUT it into the WombatKV
- * namespace under the canonical key. Errors are logged but never
- * propagate — the local save already succeeded, the cache is correct
- * either way. */
-static void wmbt_kv_shadow_kv_file(const char *path, const char *sha,
-                                int quant_bits, const char *reason) {
-    if (!g_wmbt_kv_handle || !sha || !path) return;
-    FILE *rf = fopen(path, "rb");
-    if (!rf) return;
-    if (fseek(rf, 0, SEEK_END) != 0) { fclose(rf); return; }
-    long sz = ftell(rf);
-    if (sz < 0) { fclose(rf); return; }
-    if (fseek(rf, 0, SEEK_SET) != 0) { fclose(rf); return; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
-    if (!buf) { fclose(rf); return; }
-    size_t got = fread(buf, 1, (size_t)sz, rf);
-    fclose(rf);
-    if (got != (size_t)sz) { free(buf); return; }
-    char wkey[256];
-    snprintf(wkey, sizeof(wkey),
-             "wombatkv/ds4/v1/model=%s/sha1=%s-q%d",
-             g_wmbt_kv_fingerprint, sha, quant_bits);
-    int64_t rc = wmbt_kv_put_kv(g_wmbt_kv_handle, g_wmbt_kv_namespace, wkey,
-                             buf, (size_t)sz);
-    if (rc < 0) {
-        const char *err = wmbt_kv_last_error();
-        fprintf(stderr, "ds4-server: WombatKV shadow failed (%s): %s\n",
-                reason, err ? err : "(unknown)");
-    } else {
-        fprintf(stderr,
-                "ds4-server: WombatKV shadowed key=%s reason=%s size=%ld\n",
-                wkey, reason, sz);
-    }
-    free(buf);
-}
+/* Legacy "Hook A" 30 MB monolithic shadow write (.kv -> WombatKV) was
+ * the original experimentation path. Deleted — block-based prefix
+ * match (wmbt_kv_block_chain_save) is the only production WombatKV
+ * write path. The huge-blob shadow overflowed TCP socket buffers on
+ * the daemon-mode bridge (os error 55 ENOBUFS) and provided no
+ * value over the block-chain. Removed 2026-05-18 (cleanup-2).
+ */
 
 #endif /* DS4_WOMBATKV */
 
@@ -9839,12 +9811,9 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
                    (double)(KV_CACHE_FIXED_HEADER + 4ull + text_len + payload_bytes + tool_map_bytes) / (1024.0 * 1024.0),
                    save_ms);
         kv_cache_evict(kc, live_tokens);
-#ifdef DS4_WOMBATKV
-        /* Hook A — RFC 0005 §3.1: shadow the just-written .kv into the
-         * WombatKV namespace so peer engines / restarts can recover it
-         * from cache/S3 without touching the local disk cache. */
-        wmbt_kv_shadow_kv_file(path, sha, quant_bits, reason);
-#endif
+        /* WombatKV write goes through block_chain_save in the chat
+         * handler — not here. The legacy monolithic Hook A shadow
+         * was deleted (cleanup-2). */
     }
     free(tmp);
     free(text);

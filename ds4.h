@@ -219,12 +219,12 @@ void ds4_session_snapshot_free(ds4_session_snapshot *snap);
  * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
  * implementation lands incrementally with associated tests. Callers
  * should defer hard production reliance on them until the
- * block-chain path is marked stable in the WombatKV CHANGELOG.
+ * block-prefix path is marked stable in the WombatKV CHANGELOG.
  *
  * Server-side env vars (consumed by ds4_server, not the libds4 API):
  *   WMBT_KV_BLOCK_TOKENS=<N>    block granularity (default 128; must
  *                               be a positive multiple of 128).
- * The world-knowledge bootstrap that lets the block-chain engage on
+ * The world-knowledge bootstrap that lets the block-prefix engage on
  * the FIRST request after a restart is unconditional in the
  * WombatKV substrate — no env-gate.
  * ============================================================================ */
@@ -267,7 +267,7 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
                            char *err, size_t errlen);
 
 /* RFC 0007 §10.P5 raw-tail sidecar — save the session's SWA-window raw
- * KV to a memory FILE* as a standalone sidecar payload. The block chain
+ * KV to a memory FILE* as a standalone sidecar payload. The block prefix
  * is independent — this is meant to be uploaded under
  * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` by the caller (typically
  * ds4_server) right after a successful wmbt_kv_put_kv_blocks() call.
@@ -300,7 +300,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the
  * session's SWA ring from a sidecar payload (the inverse of
- * ds4_session_save_raw_tail). Used by ds4_server after a block-chain
+ * ds4_session_save_raw_tail). Used by ds4_server after a block-prefix
  * load_blocks() succeeded, when the matching sidecar GET also hit.
  *
  * After successful install, the session's CPU/Metal raw KV cache holds

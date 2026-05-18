@@ -198,10 +198,10 @@ static void wmbt_kv_shutdown_hooks(void) {
 
 /* Legacy "Hook A" 30 MB monolithic shadow write (.kv -> WombatKV) was
  * the original experimentation path. Deleted — block-based prefix
- * match (wmbt_kv_block_chain_save) is the only production WombatKV
+ * match (wmbt_kv_save_blocks) is the only production WombatKV
  * write path. The huge-blob shadow overflowed TCP socket buffers on
  * the daemon-mode bridge (os error 55 ENOBUFS) and provided no
- * value over the block-chain. Removed 2026-05-18 (cleanup-2).
+ * value over the block-prefix. Removed 2026-05-18 (cleanup-2).
  */
 
 #endif /* DS4_WOMBATKV */
@@ -9026,7 +9026,7 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
 
 #ifdef DS4_WOMBATKV
 /* ================================================================== *
- * block-chain: content-addressed (RFC 0007 §4).
+ * block-prefix: content-addressed (RFC 0007 §4).
  *
  * The chain is a sequence of 64-char lower-hex strings, one per fixed-
  * size block of `block_tokens` tokens. The hash for block i is computed
@@ -9078,7 +9078,7 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
  * out_chain_hex must be a [max_chain_len][65] buffer. Returns the
  * number of full blocks computed (>=0), or -1 if block_tokens is
  * invalid. */
-static int kvblock_chain_compute(const ds4_tokens *tokens,
+static int kvblock_compute_hashes(const ds4_tokens *tokens,
                                  int block_tokens,
                                  int quant_bits,
                                  char (*out_chain_hex)[65],
@@ -9137,7 +9137,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
 
 
 /* ================================================================== *
- * block-chain load / save (RFC 0007 §7).
+ * block-prefix load / save (RFC 0007 §7).
  *
  * Load: tokenize prompt -> compute chain -> lookup_block_prefix to find
  * how many leading blocks are cached -> get_kv_blocks_borrowed for the
@@ -9158,7 +9158,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
  * upper bound for ctx<=64K, well under any sane single-request budget. */
 #define WMBT_KV_MAX_BLOCKS 512
 
-/* Build the prompt seed for ds4_session_sync after a block-chain load.
+/* Build the prompt seed for ds4_session_sync after a block-prefix load.
  * After ds4_session_load_blocks succeeds, ds4_session_tokens(s) holds a
  * placeholder of length (matched_blocks * block_tokens). To make the
  * subsequent ds4_session_sync() treat the loaded prefix as a real
@@ -9167,7 +9167,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
  * then passes `prompt_tokens` to ds4_session_sync, which sees a perfect
  * common prefix of length `loaded_tokens` and prefills only the
  * suffix. */
-static void block_chain_overlay_real_token_ids(ds4_session *sess,
+static void blocks_overlay_real_token_ids(ds4_session *sess,
                                           const ds4_tokens *prompt_tokens,
                                           int loaded_tokens) {
     if (!sess || !prompt_tokens || loaded_tokens <= 0) return;
@@ -9207,14 +9207,14 @@ static void *ds4_parallel_tail_fetch(void *p) {
     return NULL;
 }
 
-/* Try to load a content-addressed block-chain prefix from WombatKV.
+/* Try to load a content-addressed block-prefix prefix from WombatKV.
  * Returns:
  *    >0   number of prefix tokens installed into the session
  *     0   miss (no blocks matched, or cabi error, or layout mismatch)
  *    On success, *effective_prompt holds a copy of prompt_tokens that
  *    the caller can pass to ds4_session_sync() (the engine will see a
  *    perfect common prefix of `return value` tokens). */
-static int wmbt_kv_block_chain_try_load(server *s,
+static int wmbt_kv_try_load_blocks(server *s,
                                    const ds4_tokens *prompt_tokens,
                                    ds4_tokens *effective_prompt,
                                    char **loaded_path_out) {
@@ -9227,7 +9227,7 @@ static int wmbt_kv_block_chain_try_load(server *s,
     const double t_enter = now_sec();
     /* (1) Compute chain. */
     static char chain_hex[WMBT_KV_MAX_BLOCKS][65];
-    const int n_blocks = kvblock_chain_compute(prompt_tokens, block_tokens,
+    const int n_blocks = kvblock_compute_hashes(prompt_tokens, block_tokens,
                                                quant_bits, chain_hex,
                                                WMBT_KV_MAX_BLOCKS);
     if (n_blocks <= 0) {
@@ -9435,7 +9435,7 @@ static int wmbt_kv_block_chain_try_load(server *s,
 
     /* Overlay real token IDs on the placeholder so the upcoming
      * ds4_session_sync() sees a perfect common prefix. */
-    block_chain_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
+    blocks_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
 
     /* (8) Build effective_prompt = copy of prompt_tokens. */
     if (effective_prompt) {
@@ -9471,13 +9471,13 @@ static int wmbt_kv_block_chain_try_load(server *s,
     return loaded_tokens;
 }
 
-/* Save the block chain for `tokens` (post-generation token list) to
+/* Save the block prefix for `tokens` (post-generation token list) to
  * WombatKV. v1 always saves all full blocks — content-addressing makes
  * dup PUTs idempotent. The metadata index is updated atomically per
  * the C ABI contract.
  *
  * Returns true on success, false on error (logged, never propagated). */
-static bool wmbt_kv_block_chain_save(server *s,
+static bool wmbt_kv_save_blocks(server *s,
                                       const ds4_tokens *tokens,
                                       const char *reason) {
     if (!s || !tokens || tokens->len <= 0) return false;
@@ -9502,7 +9502,7 @@ static bool wmbt_kv_block_chain_save(server *s,
 
     /* (1) Compute chain. */
     static char chain_hex[WMBT_KV_MAX_BLOCKS][65];
-    const int n_blocks = kvblock_chain_compute(tokens, block_tokens,
+    const int n_blocks = kvblock_compute_hashes(tokens, block_tokens,
                                                quant_bits, chain_hex,
                                                WMBT_KV_MAX_BLOCKS);
     if (n_blocks <= 0) {
@@ -9577,7 +9577,7 @@ static bool wmbt_kv_block_chain_save(server *s,
     }
     const double t_post_put = now_sec();
 
-    /* (3b) RFC 0007 §10.P5 raw-tail sidecar PUT. After the block chain
+    /* (3b) RFC 0007 §10.P5 raw-tail sidecar PUT. After the block prefix
      * is saved, ALSO write the SWA-window raw KV under
      * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` so the next load
      * with matched=N can skip the post-load re-prefill of the trailing
@@ -9593,7 +9593,7 @@ static bool wmbt_kv_block_chain_save(server *s,
      * `original_total_tokens` is too large, causing restore to extend
      * the new session's checkpoint past the next request's prompt and
      * triggering a full re-prefill. The cold/continued saves at end of
-     * prefill already wrote the correct sidecar; the block chain content
+     * prefill already wrote the correct sidecar; the block prefix content
      * is identical (idempotent content-addressed PUT) so we just skip
      * sidecar re-write. */
     const bool is_shutdown_save = (reason && strcmp(reason, "shutdown") == 0);
@@ -9729,16 +9729,16 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
     sha1_bytes_hex(text, text_len, sha);
 
 #ifdef DS4_WOMBATKV
-    /* Block-chain (RFC 0007 §7) save: write the chain of fixed-size blocks.
+    /* Block-prefix (RFC 0007 §7) save: write the chain of fixed-size blocks.
      * Done in parallel with (not instead of) the v2-text-prefix save
      * below — content-addressing makes dup PUTs idempotent so this is
      * cheap, and the v2 store still serves as the byte-prefix fallback
      * for clients on the old protocol. The save runs at every store
      * site (cold / continued / final) just like the v2 path. */
     if (g_wmbt_kv_handle) {
-        wmbt_kv_block_chain_save(s, &store_tokens, reason);
+        wmbt_kv_save_blocks(s, &store_tokens, reason);
         /* Note: never propagate failure — the v2 path is still our
-         * authoritative store while the block-chain path is alpha. */
+         * authoritative store while the block-prefix path is alpha. */
     }
 #endif
 
@@ -9811,7 +9811,7 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
                    (double)(KV_CACHE_FIXED_HEADER + 4ull + text_len + payload_bytes + tool_map_bytes) / (1024.0 * 1024.0),
                    save_ms);
         kv_cache_evict(kc, live_tokens);
-        /* WombatKV write goes through block_chain_save in the chat
+        /* WombatKV write goes through save_blocks in the chat
          * handler — not here. The legacy monolithic Hook A shadow
          * was deleted (cleanup-2). */
     }
@@ -9926,7 +9926,7 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const size_t prompt_bytes = strlen(prompt_text);
 
 #ifdef DS4_WOMBATKV
-    /* Block-chain (RFC 0007 §7): content-addressed block chain. The block-
+    /* Block-prefix (RFC 0007 §7): content-addressed block prefix. The block-
      * shaped surfaces give cross-prompt prefix sharing because the hash
      * for block i depends only on (chain[i-1], tokens[i*N..(i+1)*N]) —
      * two prompts that share their first M*N tokens share the first M
@@ -9935,7 +9935,7 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
      * below: on miss falls through to those for compatibility. */
     if (g_wmbt_kv_handle) {
         const double t_enter = now_sec();
-        /* Block-chain operates on token IDs. We tokenize the rendered chat
+        /* Block-prefix operates on token IDs. We tokenize the rendered chat
          * template here (cheap) and reuse the result for the load
          * call. ds4_tokenize_rendered_chat is the same path the
          * caller (handle_chat_or_completion) uses to build prompt.v —
@@ -9943,21 +9943,21 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
         ds4_tokens prompt_tokens = {0};
         ds4_tokenize_rendered_chat(s->engine, prompt_text, &prompt_tokens);
         const double t_post_tokenize = now_sec();
-        int rc_b = wmbt_kv_block_chain_try_load(s, &prompt_tokens,
+        int rc_b = wmbt_kv_try_load_blocks(s, &prompt_tokens,
                                            effective_prompt,
                                            loaded_path_out);
         ds4_tokens_free(&prompt_tokens);
         const double t_exit = now_sec();
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
-                "\"path\":\"block_chain\","
+                "\"path\":\"block_prefix\","
                 "\"stages\":{\"entry_to_exit_ms\":%.2f,"
                 "\"tokenize_ms\":%.2f},\"loaded_tokens\":%d}\n",
                 (t_exit - t_enter) * 1000.0,
                 (t_post_tokenize - t_enter) * 1000.0, rc_b);
         if (rc_b > 0) return rc_b;
-        /* Block-chain miss → fall through to v2-text-prefix (still useful
-         * for first-touch warm-starts; block-chain kicks in once the chain
+        /* Block-prefix miss → fall through to v2-text-prefix (still useful
+         * for first-touch warm-starts; block-prefix kicks in once the chain
          * is established on the next save). */
     }
 

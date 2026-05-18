@@ -102,7 +102,6 @@ def start_server(mode: str, logfile: Path) -> int:
                     "DS4_WOMBATKV_DAEMON_TCP", "192.168.2.103:7878"
                 ),
                 "WMBT_KV_TIMING": "1",
-                "WMBT_KV_SKIP_TIER_A_PROBE": "1",
             }
         )
     cmd = [

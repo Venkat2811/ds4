@@ -88,7 +88,6 @@ def start_server(mode: str, logfile: Path) -> int:
                 "WMBT_KV_BUCKET": f"wombatkv-demo-{mode}",
                 "WMBT_KV_PUFFER_DIR": str(puffer),
                 "WMBT_KV_TIMING": "1",
-                "WMBT_KV_SKIP_TIER_A_PROBE": "1",
             }
         )
     cmd = [

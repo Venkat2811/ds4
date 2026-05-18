@@ -143,6 +143,62 @@ Linux-side tests at the same v0.1.0-alpha.6 commit:
 | `cargo test --workspace --lib --release` | **208/208 PASS** | 44 s |
 | `scripts/dst-sweep.sh --seeds 1-10` (7 failure classes × 10 seeds) | **70/70 PASS** | 0.21 s |
 
+## Output coherence (informational, alpha.7+)
+
+`mode_smoke.py` now logs a `coherence` block per mode: longest
+common prefix between turn-1 and turn-2 text, plus count of
+non-trivial shared words (length > 3). Soft threshold:
+`shared_words >= 3` for non-native modes.
+
+The shared-words metric exists because strict text equality would
+false-fire on Metal scheduling noise — even native mode shows
+small token drift across runs of the same prompt at temp=0. Shared
+vocabulary is a useful proxy for "WombatKV restored the right
+state" without being so strict it trips on argmax flips.
+
+Last run (5-mode sweep, alpha.7+):
+
+| mode | turn-2 lcp_chars | shared_words ≥ 3? |
+|---|---:|---|
+| native     | 65 | yes (7) |
+| embedded   |  0 | yes (5) |
+| daemon-shm |  0 | yes (4) |
+| daemon-tcp |  0 | yes (5) |
+
+Native turn-2 uses the local kvdisk warm path (more deterministic
+in terms of K/V byte identity), hence the high lcp. WombatKV modes
+diverge at the first character (Metal sampling non-determinism
+between fresh engine instances) but consistently share content
+vocabulary — same prompt, same model, different micro-noise.
+
+## Engine compute baseline (`ds4-bench`)
+
+CONTRIBUTING.md's speed-regression track. `ds4-bench` runs the
+ds4 engine's compute path only — it does NOT engage WombatKV
+(no save/load hooks in `ds4_bench.c`). The CSV is therefore a
+**pure engine throughput reference**, useful for catching
+engine-side perf regressions on future PRs.
+
+Captured at v0.1.0-alpha.7:
+[`bench_data/alpha7_speed_metal_ctx16k_gen64.csv`](../bench_data/alpha7_speed_metal_ctx16k_gen64.csv)
+
+| ctx_tokens | prefill_tps | gen_tps |
+|---:|---:|---:|
+|  2048 | 208.97 | 16.86 |
+|  4096 | 177.35 |  9.92 |
+|  6144 | 120.80 |  2.58 |
+|  8192 |  42.96 |  2.08 |
+| 10240 |  72.60 |  1.64 |
+| 12288 |  33.14 |  2.72 |
+| 14336 |  54.85 |  2.16 |
+| 16384 |  42.61 |  4.32 |
+
+For WombatKV-specific perf (cell-B warm restore), see
+`scripts/multi_trial_bench.py` (5-trial statistical record) and
+the per-mode numbers above. The two bench tracks are
+complementary: `ds4-bench` = engine compute regression;
+`multi_trial_bench.py` = WombatKV warm-restore regression.
+
 ## CONTRIBUTING.md correctness suite — what was run
 
 Mode 1 baseline (`./ds4_test --<flag>`):

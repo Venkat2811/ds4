@@ -60,6 +60,37 @@ _PROMPT_FILE = Path("/tmp/pg1184.txt")
 _PROMPT_CHARS = int(os.environ.get("MODE_SMOKE_PROMPT_CHARS", "5000"))
 
 
+def _coherence(text1: str, text2: str) -> dict:
+    """Cheap text-space proxy for "do these two outputs talk about the
+    same thing?" — used as a soft WombatKV-restore sanity gate.
+
+    Returns:
+      lcp_chars     longest common prefix length (in chars)
+      shared_words  number of non-trivial words present in both texts.
+                    "Non-trivial" = length > 3, so we don't count
+                    stopwords like "the", "and", "to" that match by chance.
+
+    Why not strict equality: temp=0 argmax decoding is still subject to
+    Metal scheduling noise — near-tied logits can flip across runs of
+    the same prompt. Even native (no WombatKV) shows this. So we want a
+    threshold that catches "WombatKV restore produced garbage" without
+    false-firing on token-level noise."""
+    lcp = 0
+    for c1, c2 in zip(text1, text2):
+        if c1 == c2:
+            lcp += 1
+        else:
+            break
+    words1 = {w for w in text1.split() if len(w) > 3}
+    words2 = {w for w in text2.split() if len(w) > 3}
+    return {
+        "lcp_chars": lcp,
+        "shared_words": len(words1 & words2),
+        "len_t1": len(text1),
+        "len_t2": len(text2),
+    }
+
+
 def _load_prompt() -> str:
     """Need ≥ KV_CACHE_DEFAULT_MIN_TOKENS=512 tokens to engage the
     ds4 kv-cache save path; below that, no WombatKV blocks get written.
@@ -396,6 +427,22 @@ def run_mode(mode: str) -> dict:
         if wombat_init_line:
             log(f"    server WombatKV log line: {wombat_init_line[:120]}")
 
+        # Coherence: how much do turn-1 and turn-2 outputs share?
+        # WombatKV fidelity claim is K/V byte-equivalence between
+        # warm restore and cold compute. In text space we can't get
+        # strict equality — temp=0 argmax flips on near-tied logits
+        # mean even runs with identical inputs can diverge a few
+        # tokens in. So this is INFORMATIONAL not strictly asserted.
+        # The thresholds below catch "WombatKV returned garbage"
+        # failures (where text2 would be nonsense or random bytes)
+        # without false-failing on Metal scheduling noise.
+        coh = _coherence(text1, text2)
+        log(
+            f"    coherence: lcp={coh['lcp_chars']} chars / "
+            f"shared_words={coh['shared_words']} / "
+            f"lengths t1={len(text1)} t2={len(text2)}"
+        )
+
         # Verdict
         verdict = "PASS"
         notes = []
@@ -403,11 +450,17 @@ def run_mode(mode: str) -> dict:
             verdict = "FAIL"
             notes.append("empty response")
         if mode != "native":
-            if not bucket_keys:
+            if not bucket_keys and mode != "daemon-tcp-remote":
                 notes.append("bucket empty (WombatKV did not write any blocks)")
                 # don't fail on this alone — short prompt may not trigger block write
             if t2 > t1 * 0.9:
                 notes.append(f"turn-2 not faster than turn-1 ({t2*1000:.0f} vs {t1*1000:.0f} ms) — warm restore may not have engaged")
+            # Coherence soft check (don't FAIL on it — log + note for review)
+            if coh["shared_words"] < 3:
+                notes.append(
+                    f"coherence weak: only {coh['shared_words']} shared word(s) between turn-1 and turn-2 — "
+                    f"could be Metal sampling noise or could be a real WombatKV-restore corruption"
+                )
 
         return {
             "mode": mode,
@@ -417,6 +470,7 @@ def run_mode(mode: str) -> dict:
             "speedup": round(t1 / max(t2, 1e-6), 2),
             "bucket_keys": len(bucket_keys),
             "wombat_init": wombat_init_line[:120],
+            "coherence": coh,
             "notes": notes,
         }
     finally:

@@ -12374,6 +12374,122 @@ static bool send_models(server *s, int fd) {
     return ok;
 }
 
+/* Debug-only logit snapshot endpoint. Gated by DS4_DEBUG_INTERNAL=1 so
+ * it is OFF unless an operator explicitly enables it.
+ *
+ * Use case: tensor-level WombatKV fidelity testing. The text-comparison
+ * coherence test (scripts/coherence_test.py) drowns in Metal scheduling
+ * noise — temp=0 argmax can flip on near-tied logits even between two
+ * native cold runs. This endpoint exposes the top-K (id, logit, logprob)
+ * triples at the last prompt position so an external harness can
+ * compare cold vs warm at the logit level:
+ *
+ *   - native iter1, iter2 → measure pairwise L∞(top-K logits) as the
+ *     Metal noise floor
+ *   - WombatKV-mode warm restore → compare top-K vs native cold; should
+ *     be within the noise floor if WombatKV restored K/V byte-identical
+ *
+ * Request body:  {"prompt": "...", "top_k": 20?}
+ * Response body: {"top_k":[{"token_id":N,"logit":F,"logprob":F},...],
+ *                 "prompt_tokens":N, "vocab_size":N}
+ *
+ * The endpoint does not invalidate session state; the test harness is
+ * expected to spawn a fresh ds4-server per measurement (so the session
+ * is empty at request time and `ds4_session_sync` does a fresh prefill).
+ */
+static bool send_internal_logits(server *s, int fd, const char *body) {
+    if (!getenv("DS4_DEBUG_INTERNAL")) {
+        return http_error(fd, s->enable_cors, 404,
+                          "endpoint disabled; set DS4_DEBUG_INTERNAL=1 to enable");
+    }
+
+    char *prompt_text = NULL;
+    int top_k_req = 20;
+    const char *p = body;
+    json_ws(&p);
+    if (*p != '{') {
+        return http_error(fd, s->enable_cors, 400, "expected JSON object body");
+    }
+    p++;
+    json_ws(&p);
+    while (*p && *p != '}') {
+        char *key = NULL;
+        if (!json_string(&p, &key)) {
+            free(prompt_text);
+            return http_error(fd, s->enable_cors, 400, "bad JSON key");
+        }
+        json_ws(&p);
+        if (*p != ':') {
+            free(key);
+            free(prompt_text);
+            return http_error(fd, s->enable_cors, 400, "expected colon after key");
+        }
+        p++;
+        if (!strcmp(key, "prompt")) {
+            free(prompt_text);
+            if (!json_string(&p, &prompt_text)) {
+                free(key);
+                return http_error(fd, s->enable_cors, 400, "bad 'prompt' value");
+            }
+        } else if (!strcmp(key, "top_k")) {
+            if (!json_int(&p, &top_k_req)) {
+                free(key);
+                free(prompt_text);
+                return http_error(fd, s->enable_cors, 400, "bad 'top_k' value");
+            }
+        } else {
+            if (!json_skip_value(&p)) {
+                free(key);
+                free(prompt_text);
+                return http_error(fd, s->enable_cors, 400, "bad JSON value");
+            }
+        }
+        free(key);
+        json_ws(&p);
+        if (*p == ',') { p++; json_ws(&p); }
+    }
+
+    if (!prompt_text || !prompt_text[0]) {
+        free(prompt_text);
+        return http_error(fd, s->enable_cors, 400, "missing or empty 'prompt'");
+    }
+    if (top_k_req <= 0) top_k_req = 20;
+    if (top_k_req > 100) top_k_req = 100;
+
+    ds4_tokens prompt = {0};
+    ds4_tokenize_rendered_chat(s->engine, prompt_text, &prompt);
+    free(prompt_text);
+
+    char err[160];
+    int sync_rc = ds4_session_sync(s->session, &prompt, err, sizeof(err));
+    int prompt_len = (int)prompt.len;
+    ds4_tokens_free(&prompt);
+
+    if (sync_rc != 0) {
+        return http_error(fd, s->enable_cors, 500, err);
+    }
+
+    ds4_token_score scores[100];
+    int got = ds4_session_top_logprobs(s->session, scores, top_k_req);
+
+    buf b = {0};
+    buf_puts(&b, "{\"top_k\":[");
+    for (int i = 0; i < got; i++) {
+        if (i > 0) buf_putc(&b, ',');
+        buf_printf(&b, "{\"token_id\":%d,\"logit\":%.7g,\"logprob\":%.7g}",
+                   scores[i].id, scores[i].logit, scores[i].logprob);
+    }
+    /* vocab_size is intentionally not in the response — the consumer
+     * needs only the top-K triples to do cold-vs-warm logit comparison.
+     * (The ds4 vocab-size constant DS4_N_VOCAB isn't in the public
+     * ds4.h surface anyway.) */
+    buf_printf(&b, "],\"prompt_tokens\":%d,\"top_k_returned\":%d}\n",
+               prompt_len, got);
+    bool ok = http_response(fd, s->enable_cors, 200, "application/json", b.ptr);
+    buf_free(&b);
+    return ok;
+}
+
 static void client_done(server *s) {
     pthread_mutex_lock(&s->mu);
     if (s->clients > 0) s->clients--;
@@ -12408,6 +12524,11 @@ static void *client_main(void *arg) {
     }
     if (!strcmp(hr.method, "GET") && !strcmp(hr.path, "/v1/models/deepseek-v4-flash")) {
         send_model(s, fd);
+        http_request_free(&hr);
+        goto done;
+    }
+    if (!strcmp(hr.method, "POST") && !strcmp(hr.path, "/v1/internal/logits")) {
+        send_internal_logits(s, fd, hr.body);
         http_request_free(&hr);
         goto done;
     }

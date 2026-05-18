@@ -53,6 +53,9 @@ S3_SECRET = "minioadmin"
 PORT = 8000
 TCP_PORT = 7878
 
+# Set via --remote-tcp / MODE_SMOKE_REMOTE_TCP for daemon-tcp-remote mode.
+REMOTE_TCP_ADDR = ""
+
 _PROMPT_FILE = Path("/tmp/pg1184.txt")
 _PROMPT_CHARS = int(os.environ.get("MODE_SMOKE_PROMPT_CHARS", "5000"))
 
@@ -229,6 +232,12 @@ def server_env(mode: str, kvdir: Path, puffer: Path) -> dict[str, str]:
                 "DS4_WOMBATKV_DAEMON_TCP": f"127.0.0.1:{TCP_PORT}",
             }
         )
+    elif mode == "daemon-tcp-remote":
+        env.update(
+            {
+                "DS4_WOMBATKV_DAEMON_TCP": REMOTE_TCP_ADDR,
+            }
+        )
     else:
         raise ValueError(mode)
     return env
@@ -322,7 +331,9 @@ def run_mode(mode: str) -> dict:
     # Embedded: ds4-server owns S3 → bucket = wombatkv-smoke-embedded.
     # Daemon modes: the daemon owns S3 → bucket = wombatkv-smoke-<prefix>
     # where <prefix> is the daemon's WMBT_KV_BUCKET suffix set in
-    # start_daemon ("smoke-shm" or "smoke-tcp").
+    # start_daemon ("smoke-shm" or "smoke-tcp"). For daemon-tcp-remote
+    # the bucket lives on the REMOTE host's S3 endpoint — we don't try
+    # to wipe it from here.
     if mode == "embedded":
         wipe_bucket("wombatkv-smoke-embedded")
     elif mode == "daemon-shm":
@@ -338,6 +349,8 @@ def run_mode(mode: str) -> dict:
         elif mode == "daemon-tcp":
             log(f"  starting wombatkv-daemon (TCP 127.0.0.1:{TCP_PORT})")
             daemon_proc = start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
+        elif mode == "daemon-tcp-remote":
+            log(f"  remote daemon expected at {REMOTE_TCP_ADDR} — no local start")
 
         log("  starting ds4-server")
         start_server(mode, kvdir, puffer, serverlog)
@@ -371,6 +384,8 @@ def run_mode(mode: str) -> dict:
         if bucket:
             bucket_keys = list_bucket_keys(bucket)
             log(f"    bucket {bucket}: {len(bucket_keys)} object(s)")
+        elif mode == "daemon-tcp-remote":
+            log("    bucket on remote host's S3 — not inspecting from here")
 
         # Server log signal: did WombatKV engage?
         srv_text = serverlog.read_text() if serverlog.exists() else ""
@@ -414,11 +429,25 @@ def run_mode(mode: str) -> dict:
                 daemon_proc.kill()
         if mode in ("daemon-shm", "daemon-tcp"):
             kill_all_daemon()
+        # daemon-tcp-remote: remote daemon is the user's responsibility
 
 
 def main() -> int:
+    global REMOTE_TCP_ADDR
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["native", "embedded", "daemon-shm", "daemon-tcp", "all"])
+    p.add_argument(
+        "mode",
+        choices=["native", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "all"],
+    )
+    p.add_argument(
+        "--remote-tcp",
+        metavar="HOST:PORT",
+        default=os.environ.get("MODE_SMOKE_REMOTE_TCP", ""),
+        help="For mode daemon-tcp-remote: address of an already-running "
+             "wombatkv-daemon on another host (e.g. 192.168.x.x:7878). "
+             "The daemon is the user's responsibility; this script only "
+             "starts the local ds4-server pointed at it.",
+    )
     args = p.parse_args()
 
     if not DS4_BIN.exists():
@@ -427,6 +456,11 @@ def main() -> int:
     if args.mode in ("daemon-shm", "daemon-tcp", "all") and not DAEMON_BIN.exists():
         log(f"ERROR: {DAEMON_BIN} does not exist — build wombatkv-daemon first")
         return 1
+    if args.mode == "daemon-tcp-remote":
+        if not args.remote_tcp:
+            log("ERROR: daemon-tcp-remote requires --remote-tcp HOST:PORT (or MODE_SMOKE_REMOTE_TCP env)")
+            return 1
+        REMOTE_TCP_ADDR = args.remote_tcp
 
     modes = ["native", "embedded", "daemon-shm", "daemon-tcp"] if args.mode == "all" else [args.mode]
     results = []

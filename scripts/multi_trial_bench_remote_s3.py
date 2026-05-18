@@ -89,6 +89,12 @@ def start_server(mode: str, logfile: Path) -> int:
                 "WMBT_KV_PUFFER_DIR": str(puffer),
                 "WMBT_KV_TIMING": "1",
                 "WMBT_KV_SKIP_TIER_A_PROBE": "1",
+                # Non-loopback endpoint → wombatkv refuses default
+                # minioadmin creds in production-safety mode. Opt in
+                # explicitly here since this IS our local dev cluster.
+                "WMBT_KV_LOCAL_DEV": "1",
+                "AWS_ACCESS_KEY_ID": "minioadmin",
+                "AWS_SECRET_ACCESS_KEY": "minioadmin",
             }
         )
     cmd = [

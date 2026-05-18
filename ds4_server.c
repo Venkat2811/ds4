@@ -115,13 +115,24 @@ static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
  * exits non-zero — silent fallback to local kv-disk would mask a config
  * error and quietly serve worse perf than the user requested. */
 static void wmbt_kv_init_hooks(const char *model_path) {
-    if (!getenv("DS4_WOMBATKV_ENABLE")) return;
+    /* Two paths engage WombatKV:
+     *   (a) DS4_WOMBATKV_ENABLE=1 — embedded (default) or daemon-SHM
+     *       (if WMBT_KV_REMOTE_PREFIX is also set, picked up by
+     *       wmbt_kv_init_from_env)
+     *   (b) DS4_WOMBATKV_DAEMON_TCP=<host:port> — daemon-TCP
+     *       shortcut, no separate enable env needed (matches the
+     *       docs/ENV.md mode-4 example which advertises this as a
+     *       one-env-var trigger). */
+    const char *enable = getenv("DS4_WOMBATKV_ENABLE");
+    const char *tcp_addr = getenv("DS4_WOMBATKV_DAEMON_TCP");
+    const int tcp_shortcut = (tcp_addr && tcp_addr[0]) ? 1 : 0;
+    if ((!enable || !enable[0]) && !tcp_shortcut) return;
     char derived_fp[25] = {0};
     const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
     if (!fp || strlen(fp) < 24) {
         if (!model_path || !model_path[0]) {
             fprintf(stderr,
-                    "ds4-server: DS4_WOMBATKV_ENABLE=1, fingerprint env unset, "
+                    "ds4-server: WombatKV requested, fingerprint env unset, "
                     "and model path is empty — cannot derive fingerprint\n");
             exit(2);
         }
@@ -149,8 +160,7 @@ static void wmbt_kv_init_hooks(const char *model_path) {
      * daemon owns the foyer + S3 backing; this ds4 process just
      * shuttles WireRequest frames over a length-prefixed rkyv envelope.
      * See RFC 0014 + crates/wombatkv-daemon/src/tcp_transport.rs. */
-    const char *tcp_addr = getenv("DS4_WOMBATKV_DAEMON_TCP");
-    if (tcp_addr && tcp_addr[0]) {
+    if (tcp_shortcut) {
         g_wmbt_kv_handle = wmbt_kv_open_tcp(tcp_addr);
     } else {
         g_wmbt_kv_handle = wmbt_kv_init_from_env();
@@ -158,8 +168,8 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     if (!g_wmbt_kv_handle) {
         const char *err = wmbt_kv_last_error();
         fprintf(stderr,
-                "ds4-server: WombatKV init failed (DS4_WOMBATKV_ENABLE=1 was set, "
-                "refusing to silently fall back to local kv-disk): %s\n",
+                "ds4-server: WombatKV init failed (refusing to silently "
+                "fall back to local kv-disk): %s\n",
                 err ? err : "(unknown)");
         exit(2);
     }

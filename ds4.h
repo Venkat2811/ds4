@@ -198,7 +198,7 @@ int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, 
 void ds4_session_snapshot_free(ds4_session_snapshot *snap);
 
 /* ============================================================================
- * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ * Token-aligned KV blocks (RFC 0007 — KVBlock/0.1)
  * ----------------------------------------------------------------------------
  * Slice the session's KV state by token range. Used by WombatKV to store
  * content-addressed token-aligned blocks on object storage, enabling
@@ -224,17 +224,15 @@ void ds4_session_snapshot_free(ds4_session_snapshot *snap);
  *
  * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
  * implementation lands incrementally with associated tests. Callers
- * should defer hard production reliance on them until Tier B is marked
- * stable in the WombatKV CHANGELOG.
+ * should defer hard production reliance on them until the
+ * block-chain path is marked stable in the WombatKV CHANGELOG.
  *
- * Server-side env-var precedence (consumed by ds4_server, not the libds4 API):
- *   WMBT_KV_TIER_B=1            opt in to the block-chain load/store path.
- *   WMBT_KV_BOOTSTRAP_WORLD=1   re-index S3 manifests at handle init so
- *                               Tier B can engage on the FIRST request
- *                               after a process restart.
- *   WMBT_KV_TIER_B=1 implicitly enables WMBT_KV_BOOTSTRAP_WORLD=1 unless
- *   the user has set it explicitly (e.g. =0 to opt out of the implicit
- *   bootstrap when they know the in-process index is already warm).
+ * Server-side env vars (consumed by ds4_server, not the libds4 API):
+ *   WMBT_KV_BLOCK_TOKENS=<N>    block granularity (default 128; must
+ *                               be a positive multiple of 128).
+ * The world-knowledge bootstrap that lets the block-chain engage on
+ * the FIRST request after a restart is unconditional in the
+ * WombatKV substrate — no env-gate.
  * ============================================================================ */
 
 /* One block in a load batch. token_end is exclusive. */
@@ -308,7 +306,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the
  * session's SWA ring from a sidecar payload (the inverse of
- * ds4_session_save_raw_tail). Used by ds4_server after a Tier B
+ * ds4_session_save_raw_tail). Used by ds4_server after a block-chain
  * load_blocks() succeeded, when the matching sidecar GET also hit.
  *
  * After successful install, the session's CPU/Metal raw KV cache holds

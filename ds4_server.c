@@ -48,14 +48,14 @@ static volatile sig_atomic_t g_listen_fd = -1;
 static wmbt_kv_handle_t *g_wmbt_kv_handle = NULL;
 static char *g_wmbt_kv_namespace = NULL;
 static char *g_wmbt_kv_fingerprint = NULL;
-/* Tier B: when set, ds4 saves/loads a CHAIN of fixed-size content-
- * addressed blocks via the block-shaped WombatKV C ABI
+/* Block-based prefix-match path: ds4 saves/loads a CHAIN of fixed-size
+ * content-addressed blocks via the WombatKV C ABI
  * (wmbt_kv_lookup_block_prefix / get_kv_blocks_borrowed / put_kv_blocks).
- * This is the cross-prompt prefix-sharing path. Mutually exclusive with
- * replace_local: when both are configured, Tier B takes precedence and
- * replace_local is logged-and-skipped at init. RFC 0007 §6. */
-static int g_wmbt_kv_tier_b = 0;
-static int g_wmbt_kv_tier_b_block_tokens = 128;
+ * This is the cross-prompt prefix-sharing path and the only production
+ * load/store path. When replace_local is also configured, the block path
+ * runs first and short-circuits; replace_local stays armed as the v1/
+ * text-prefix fallback. RFC 0007 §6. */
+static int g_wmbt_kv_block_tokens = 128;
 #endif
 
 static void stop_signal_handler(int sig) {
@@ -164,33 +164,25 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     const char *ns = getenv("WMBT_KV_NAMESPACE");
     g_wmbt_kv_namespace = xstrdup(ns ? ns : "ds4-metal");
     g_wmbt_kv_fingerprint = xstrdup(fp);
-    /* Tier B (block-chain) is DEFAULT-ON in 0.1.0-alpha. Caller can opt
-     * out with WMBT_KV_TIER_B=0. WMBT_KV_TIER_B_BLOCK_TOKENS overrides
-     * the default block granularity (must be a positive multiple of 128;
-     * default 128). */
-    const char *tier_b_env = getenv("WMBT_KV_TIER_B");
-    int tier_b_active = (tier_b_env == NULL) || (tier_b_env[0] == '1');
-    if (tier_b_active) {
-        const char *bt_env = getenv("WMBT_KV_TIER_B_BLOCK_TOKENS");
-        int bt = bt_env ? atoi(bt_env) : 128;
-        if (ds4_kvblock_validate_block_tokens(bt) != 0) {
-            fprintf(stderr,
-                    "ds4-server: WMBT_KV_TIER_B_BLOCK_TOKENS=%d is invalid "
-                    "(must be positive multiple of 128, <=8192). "
-                    "Refusing to start.\n", bt);
-            exit(2);
-        }
-        g_wmbt_kv_tier_b = 1;
-        g_wmbt_kv_tier_b_block_tokens = bt;
-        /* Tier B and replace-local share the same load/store hook; the
-         * Tier B path runs first and short-circuits. Keep replace_local
-         * armed as the v1/text-prefix fallback. */
+    /* WMBT_KV_BLOCK_TOKENS overrides the default block granularity
+     * (must be a positive multiple of 128; default 128). Block-based
+     * prefix match is the only production load/store path; there is
+     * no opt-out. */
+    const char *bt_env = getenv("WMBT_KV_BLOCK_TOKENS");
+    int bt = bt_env ? atoi(bt_env) : 128;
+    if (ds4_kvblock_validate_block_tokens(bt) != 0) {
+        fprintf(stderr,
+                "ds4-server: WMBT_KV_BLOCK_TOKENS=%d is invalid "
+                "(must be positive multiple of 128, <=8192). "
+                "Refusing to start.\n", bt);
+        exit(2);
     }
+    g_wmbt_kv_block_tokens = bt;
     fprintf(stderr,
             "ds4-server: WombatKV hooks enabled namespace=%s fingerprint=%s "
-            "tier_b=%d block_tokens=%d\n",
+            "block_tokens=%d\n",
             g_wmbt_kv_namespace, g_wmbt_kv_fingerprint,
-            g_wmbt_kv_tier_b, g_wmbt_kv_tier_b_block_tokens);
+            g_wmbt_kv_block_tokens);
 }
 
 static void wmbt_kv_shutdown_hooks(void) {
@@ -9062,7 +9054,7 @@ static void kv_cache_rewrite_tool_map(server *s, const char *path, const char *t
 
 #ifdef DS4_WOMBATKV
 /* ================================================================== *
- * Tier B: content-addressed block chain (RFC 0007 §4).
+ * block-chain: content-addressed (RFC 0007 §4).
  *
  * The chain is a sequence of 64-char lower-hex strings, one per fixed-
  * size block of `block_tokens` tokens. The hash for block i is computed
@@ -9173,7 +9165,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
 
 
 /* ================================================================== *
- * Tier B load / save (RFC 0007 §7).
+ * block-chain load / save (RFC 0007 §7).
  *
  * Load: tokenize prompt -> compute chain -> lookup_block_prefix to find
  * how many leading blocks are cached -> get_kv_blocks_borrowed for the
@@ -9192,9 +9184,9 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
 /* Maximum chain length we track per request. With block_tokens=128 and
  * an 8 K context window, the largest chain is 64 entries. Generous
  * upper bound for ctx<=64K, well under any sane single-request budget. */
-#define WMBT_KV_TIER_B_MAX_BLOCKS 512
+#define WMBT_KV_MAX_BLOCKS 512
 
-/* Build the prompt seed for ds4_session_sync after a Tier B block load.
+/* Build the prompt seed for ds4_session_sync after a block-chain load.
  * After ds4_session_load_blocks succeeds, ds4_session_tokens(s) holds a
  * placeholder of length (matched_blocks * block_tokens). To make the
  * subsequent ds4_session_sync() treat the loaded prefix as a real
@@ -9203,7 +9195,7 @@ static int kvblock_chain_compute(const ds4_tokens *tokens,
  * then passes `prompt_tokens` to ds4_session_sync, which sees a perfect
  * common prefix of length `loaded_tokens` and prefills only the
  * suffix. */
-static void tier_b_overlay_real_token_ids(ds4_session *sess,
+static void block_chain_overlay_real_token_ids(ds4_session *sess,
                                           const ds4_tokens *prompt_tokens,
                                           int loaded_tokens) {
     if (!sess || !prompt_tokens || loaded_tokens <= 0) return;
@@ -9250,22 +9242,22 @@ static void *ds4_parallel_tail_fetch(void *p) {
  *    On success, *effective_prompt holds a copy of prompt_tokens that
  *    the caller can pass to ds4_session_sync() (the engine will see a
  *    perfect common prefix of `return value` tokens). */
-static int wmbt_kv_tier_b_try_load(server *s,
+static int wmbt_kv_block_chain_try_load(server *s,
                                    const ds4_tokens *prompt_tokens,
                                    ds4_tokens *effective_prompt,
                                    char **loaded_path_out) {
     if (!s || !prompt_tokens || prompt_tokens->len <= 0) return 0;
-    if (!g_wmbt_kv_tier_b || !g_wmbt_kv_handle) return 0;
-    const int block_tokens = g_wmbt_kv_tier_b_block_tokens;
+    if (!g_wmbt_kv_handle) return 0;
+    const int block_tokens = g_wmbt_kv_block_tokens;
     if (ds4_kvblock_validate_block_tokens(block_tokens) != 0) return 0;
     const int quant_bits = ds4_engine_routed_quant_bits(s->engine);
 
     const double t_enter = now_sec();
     /* (1) Compute chain. */
-    static char chain_hex[WMBT_KV_TIER_B_MAX_BLOCKS][65];
+    static char chain_hex[WMBT_KV_MAX_BLOCKS][65];
     const int n_blocks = kvblock_chain_compute(prompt_tokens, block_tokens,
                                                quant_bits, chain_hex,
-                                               WMBT_KV_TIER_B_MAX_BLOCKS);
+                                               WMBT_KV_MAX_BLOCKS);
     if (n_blocks <= 0) {
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kvblocks_load\","
@@ -9277,7 +9269,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
     const double t_post_chain = now_sec();
 
     /* (2) lookup_block_prefix → matched count. */
-    const char *hash_ptrs[WMBT_KV_TIER_B_MAX_BLOCKS];
+    const char *hash_ptrs[WMBT_KV_MAX_BLOCKS];
     for (int i = 0; i < n_blocks; i++) hash_ptrs[i] = chain_hex[i];
     size_t matched = 0;
     char cabi_err[160] = {0};
@@ -9471,7 +9463,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
 
     /* Overlay real token IDs on the placeholder so the upcoming
      * ds4_session_sync() sees a perfect common prefix. */
-    tier_b_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
+    block_chain_overlay_real_token_ids(s->session, prompt_tokens, loaded_tokens);
 
     /* (8) Build effective_prompt = copy of prompt_tokens. */
     if (effective_prompt) {
@@ -9481,7 +9473,7 @@ static int wmbt_kv_tier_b_try_load(server *s,
     if (loaded_path_out) {
         char hint[96];
         snprintf(hint, sizeof(hint),
-                 "wmbt_kv-tier_b:blocks=%zu/bt=%d%s",
+                 "wmbt_kv-blocks=%zu/bt=%d%s",
                  matched, block_tokens,
                  warm_tail_restored ? "/warm_tail" : "");
         *loaded_path_out = xstrdup(hint);
@@ -9513,12 +9505,12 @@ static int wmbt_kv_tier_b_try_load(server *s,
  * the C ABI contract.
  *
  * Returns true on success, false on error (logged, never propagated). */
-static bool wmbt_kv_tier_b_save_chain(server *s,
+static bool wmbt_kv_block_chain_save(server *s,
                                       const ds4_tokens *tokens,
                                       const char *reason) {
     if (!s || !tokens || tokens->len <= 0) return false;
-    if (!g_wmbt_kv_tier_b || !g_wmbt_kv_handle) return false;
-    const int block_tokens = g_wmbt_kv_tier_b_block_tokens;
+    if (!g_wmbt_kv_handle) return false;
+    const int block_tokens = g_wmbt_kv_block_tokens;
     if (ds4_kvblock_validate_block_tokens(block_tokens) != 0) return false;
     const int quant_bits = ds4_engine_routed_quant_bits(s->engine);
 
@@ -9537,10 +9529,10 @@ static bool wmbt_kv_tier_b_save_chain(server *s,
     }
 
     /* (1) Compute chain. */
-    static char chain_hex[WMBT_KV_TIER_B_MAX_BLOCKS][65];
+    static char chain_hex[WMBT_KV_MAX_BLOCKS][65];
     const int n_blocks = kvblock_chain_compute(tokens, block_tokens,
                                                quant_bits, chain_hex,
-                                               WMBT_KV_TIER_B_MAX_BLOCKS);
+                                               WMBT_KV_MAX_BLOCKS);
     if (n_blocks <= 0) {
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kvblocks_save\","
@@ -9765,16 +9757,16 @@ static bool kv_cache_store_live_prefix_text(server *s, const ds4_tokens *tokens,
     sha1_bytes_hex(text, text_len, sha);
 
 #ifdef DS4_WOMBATKV
-    /* Tier B (RFC 0007 §7) save: write the chain of fixed-size blocks.
+    /* Block-chain (RFC 0007 §7) save: write the chain of fixed-size blocks.
      * Done in parallel with (not instead of) the v2-text-prefix save
      * below — content-addressing makes dup PUTs idempotent so this is
      * cheap, and the v2 store still serves as the byte-prefix fallback
      * for clients on the old protocol. The save runs at every store
      * site (cold / continued / final) just like the v2 path. */
-    if (g_wmbt_kv_tier_b && g_wmbt_kv_handle) {
-        wmbt_kv_tier_b_save_chain(s, &store_tokens, reason);
+    if (g_wmbt_kv_handle) {
+        wmbt_kv_block_chain_save(s, &store_tokens, reason);
         /* Note: never propagate failure — the v2 path is still our
-         * authoritative store while Tier B is alpha. */
+         * authoritative store while the block-chain path is alpha. */
     }
 #endif
 
@@ -9965,16 +9957,16 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
     const size_t prompt_bytes = strlen(prompt_text);
 
 #ifdef DS4_WOMBATKV
-    /* Tier B (RFC 0007 §7): content-addressed block chain. The block-
+    /* Block-chain (RFC 0007 §7): content-addressed block chain. The block-
      * shaped surfaces give cross-prompt prefix sharing because the hash
      * for block i depends only on (chain[i-1], tokens[i*N..(i+1)*N]) —
      * two prompts that share their first M*N tokens share the first M
      * blocks regardless of any byte-prefix differences in the rendered
      * chat template. Takes precedence over the v2-text-prefix paths
      * below: on miss falls through to those for compatibility. */
-    if (g_wmbt_kv_tier_b && g_wmbt_kv_handle) {
+    if (g_wmbt_kv_handle) {
         const double t_enter = now_sec();
-        /* Tier B operates on token IDs. We tokenize the rendered chat
+        /* Block-chain operates on token IDs. We tokenize the rendered chat
          * template here (cheap) and reuse the result for the load
          * call. ds4_tokenize_rendered_chat is the same path the
          * caller (handle_chat_or_completion) uses to build prompt.v —
@@ -9982,21 +9974,21 @@ static int kv_cache_try_load_text(server *s, const char *prompt_text,
         ds4_tokens prompt_tokens = {0};
         ds4_tokenize_rendered_chat(s->engine, prompt_text, &prompt_tokens);
         const double t_post_tokenize = now_sec();
-        int rc_b = wmbt_kv_tier_b_try_load(s, &prompt_tokens,
+        int rc_b = wmbt_kv_block_chain_try_load(s, &prompt_tokens,
                                            effective_prompt,
                                            loaded_path_out);
         ds4_tokens_free(&prompt_tokens);
         const double t_exit = now_sec();
         fprintf(stderr,
                 "[MyelonInstr] {\"scope\":\"ds4_kv_try_load_text\","
-                "\"path\":\"tier_b\","
+                "\"path\":\"block_chain\","
                 "\"stages\":{\"entry_to_exit_ms\":%.2f,"
                 "\"tokenize_ms\":%.2f},\"loaded_tokens\":%d}\n",
                 (t_exit - t_enter) * 1000.0,
                 (t_post_tokenize - t_enter) * 1000.0, rc_b);
         if (rc_b > 0) return rc_b;
-        /* Tier B miss → fall through to v2-text-prefix (still useful
-         * for first-touch warm-starts; Tier B kicks in once the chain
+        /* Block-chain miss → fall through to v2-text-prefix (still useful
+         * for first-touch warm-starts; block-chain kicks in once the chain
          * is established on the next save). */
     }
 

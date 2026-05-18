@@ -74,7 +74,6 @@ def _common_wombatkv_env():
         'WMBT_KV_CHUNK_VERIFY': '0',
         'WMBT_KV_S3_PREWARM': '8',
         'WMBT_KV_CHUNK_BYTES': '8388608',
-        'WMBT_KV_TIER_B': '1',
         'WMBT_KV_TIER_B_BLOCK_TOKENS': '128',
         'WMBT_KV_BOOTSTRAP_SLATEDB': '1',
     }

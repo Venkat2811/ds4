@@ -16513,7 +16513,7 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 }
 
 /* ============================================================================
- * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ * Token-aligned KV blocks (RFC 0007 — KVBlock/0.1)
  *
  * Public API declared in ds4.h. The CPU save path is implemented; load /
  * Metal paths remain skeletons. The wire format is documented inline at
@@ -16575,7 +16575,7 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  * Producers call ds4_session_save_raw_tail(s, fp, ...) to write the
  * envelope to a memory FILE*; ds4_server then PUTs the bytes via
  * wmbt_kv_put_raw_tail keyed by chain-tip hash. Consumers call
- * ds4_session_install_raw_tail(s, bytes, len, ...) after a Tier B
+ * ds4_session_install_raw_tail(s, bytes, len, ...) after a block-chain
  * load_blocks succeeded; on success n_raw is populated and the next
  * session_sync() can short-circuit the SWA-window re-prefill.
  */
@@ -17033,7 +17033,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw bytes from a buffer
  * into the session's SWA ring. Used by ds4_server after a successful
- * Tier B load_blocks + sidecar GET to skip the post-load re-prefill of
+ * block-chain load + sidecar GET to skip the post-load re-prefill of
  * the last DS4_N_SWA tokens.
  *
  * Returns 0 on successful install, -1 on parse/layout/capacity error.
@@ -17466,7 +17466,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
      * common_prefix logic; for that to short-circuit prefill, the caller
      * must overlay the real token IDs before sync.
      *
-     * The contract is documented in ds4.h alongside load_blocks. For Tier B
+     * The contract is documented in ds4.h alongside load_blocks. For block-chain
      * the placeholder is intentional: the C ABI surface returns a session
      * that has the right KV state but a placeholder token list, and the
      * caller (ds4_server / WombatKV bindings) is responsible for replacing

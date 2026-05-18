@@ -134,22 +134,12 @@ static void wmbt_kv_init_hooks(const char *model_path) {
                 "ds4-server: DS4_WMBT_KV_FINGERPRINT24 unset; derived %s from sha1(%s)\n",
                 fp, model_path);
     }
-    /* Tier B is DEFAULT-ON in 0.1.0-alpha. Caller can opt out with
-     * WMBT_KV_TIER_B=0 (or any non-"1" value) — the alpha shipping
-     * shape is "the headline behavior is the default; one env var to
-     * disable, none to enable". Tier B implies bootstrap_world_knowledge
-     * for the cross-restart restore path; we propagate the gate here so
-     * downstream C ABI sees it. */
-    const char *tier_b_probe = getenv("WMBT_KV_TIER_B");
-    int tier_b_enabled = (tier_b_probe == NULL) || (tier_b_probe[0] == '1');
-    if (tier_b_enabled && getenv("WMBT_KV_BOOTSTRAP_WORLD") == NULL) {
-        setenv("WMBT_KV_BOOTSTRAP_WORLD", "1", 1);
-    }
     /* Align the namespace default between ds4 (C side) and WombatKV
-     * (Rust side) BEFORE init runs `bootstrap_world_knowledge`. Without
+     * (Rust side) BEFORE init runs bootstrap_world_knowledge. Without
      * this, ds4 saves under `ds4-metal` but the Rust bootstrap scans
-     * the default `"default"` namespace and indexes zero blocks — Tier B
-     * lookups then miss and the load falls back to the slower path. */
+     * the default `"default"` namespace and indexes zero blocks —
+     * block-prefix lookups then miss and the load falls back to the
+     * slower path. */
     if (getenv("WMBT_KV_NAMESPACE") == NULL) {
         setenv("WMBT_KV_NAMESPACE", "ds4-metal", 1);
     }

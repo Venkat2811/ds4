@@ -1,0 +1,280 @@
+{
+  "results": [
+    {
+      "mode": "native",
+      "iterations": [
+        {
+          "iter": 1,
+          "elapsed_ms": 8705,
+          "text": "The user provides a passage that is a repetitive statement about \"The Count of Monte Cristo\" being a novel by Alexandre Dumas. The passage repeats the same sentence"
+        },
+        {
+          "iter": 2,
+          "elapsed_ms": 7516,
+          "text": "We need to summarize the key themes of The Count of Monte Cristo in 30 words. The passage is repetitive but essentially states the novel's author. The themes"
+        },
+        {
+          "iter": 3,
+          "elapsed_ms": 7335,
+          "text": "The user has provided a passage that repeats the same sentence many times. The passage is essentially a single statement repeated: \"The Count of Monte Cristo is a novel"
+        }
+      ],
+      "pairwise": [
+        {
+          "pair": "iter1-iter2",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 4,
+          "len_a": 164,
+          "len_b": 157,
+          "len_delta": 7
+        },
+        {
+          "pair": "iter1-iter3",
+          "byte_equal": false,
+          "lcp_chars": 9,
+          "shared_words": 11,
+          "len_a": 164,
+          "len_b": 168,
+          "len_delta": 4
+        },
+        {
+          "pair": "iter2-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 5,
+          "len_a": 157,
+          "len_b": 168,
+          "len_delta": 11
+        }
+      ]
+    },
+    {
+      "mode": "embedded",
+      "iterations": [
+        {
+          "iter": 1,
+          "elapsed_ms": 7627,
+          "text": "The user provides a passage that is simply a repeated sentence: \"The Count of Monte Cristo is a novel by Alexandre Dumas.\" This repetition occurs many times,"
+        },
+        {
+          "iter": 2,
+          "elapsed_ms": 1729,
+          "text": "Hmm, the user provided a passage that repeats the same sentence about \"The Count of Monte Cristo\" over a hundred times. It's clearly a repetitive text"
+        },
+        {
+          "iter": 3,
+          "elapsed_ms": 1664,
+          "text": "We need to summarize the key themes of The Count of Monte Cristo. The passage is just repeated repetition of the same sentence, so it's essentially a single statement"
+        }
+      ],
+      "pairwise": [
+        {
+          "pair": "iter1-iter2",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 6,
+          "len_a": 157,
+          "len_b": 150,
+          "len_delta": 7
+        },
+        {
+          "pair": "iter1-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 5,
+          "len_a": 157,
+          "len_b": 166,
+          "len_delta": 9
+        },
+        {
+          "pair": "iter2-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 4,
+          "len_a": 150,
+          "len_b": 166,
+          "len_delta": 16
+        }
+      ]
+    },
+    {
+      "mode": "daemon-shm",
+      "iterations": [
+        {
+          "iter": 1,
+          "elapsed_ms": 31721,
+          "text": "The user provides a passage that repeats the same sentence 100 times: \"The Count of Monte Cristo is a novel by Alexandre Dumas.\" This is clearly a"
+        },
+        {
+          "iter": 2,
+          "elapsed_ms": 2105,
+          "text": "The user has provided a passage that repeats the same sentence many times. The key themes of the novel are not explicitly stated in the passage. I need to provide"
+        },
+        {
+          "iter": 3,
+          "elapsed_ms": 1701,
+          "text": "The user provides a passage that is the same sentence repeated many times: \"The Count of Monte Cristo is a novel by Alexandre Dumas.\" The repetition seems to"
+        }
+      ],
+      "pairwise": [
+        {
+          "pair": "iter1-iter2",
+          "byte_equal": false,
+          "lcp_chars": 9,
+          "shared_words": 7,
+          "len_a": 146,
+          "len_b": 162,
+          "len_delta": 16
+        },
+        {
+          "pair": "iter1-iter3",
+          "byte_equal": false,
+          "lcp_chars": 33,
+          "shared_words": 14,
+          "len_a": 146,
+          "len_b": 157,
+          "len_delta": 11
+        },
+        {
+          "pair": "iter2-iter3",
+          "byte_equal": false,
+          "lcp_chars": 9,
+          "shared_words": 7,
+          "len_a": 162,
+          "len_b": 157,
+          "len_delta": 5
+        }
+      ]
+    },
+    {
+      "mode": "daemon-tcp",
+      "iterations": [
+        {
+          "iter": 1,
+          "elapsed_ms": 45032,
+          "text": "The user provides a passage that repeats the same sentence many times: \"The Count of Monte Cristo is a novel by Alexandre Dumas.\" The user asks to summarize"
+        },
+        {
+          "iter": 2,
+          "elapsed_ms": 1842,
+          "text": "We need to summarize the key themes of The Count of Monte Cristo in 30 words. The passage is repetitive, but the novel itself is about revenge, justice"
+        },
+        {
+          "iter": 3,
+          "elapsed_ms": 1833,
+          "text": "We need to summarize the key themes of The Count of Monte Cristo in 30 words. The passage is repetitive and just states the novel's author and title,"
+        }
+      ],
+      "pairwise": [
+        {
+          "pair": "iter1-iter2",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 6,
+          "len_a": 156,
+          "len_b": 151,
+          "len_delta": 5
+        },
+        {
+          "pair": "iter1-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 5,
+          "len_a": 156,
+          "len_b": 149,
+          "len_delta": 7
+        },
+        {
+          "pair": "iter2-iter3",
+          "byte_equal": false,
+          "lcp_chars": 103,
+          "shared_words": 8,
+          "len_a": 151,
+          "len_b": 149,
+          "len_delta": 2
+        }
+      ]
+    },
+    {
+      "mode": "daemon-http",
+      "iterations": [
+        {
+          "iter": 1,
+          "elapsed_ms": 17237,
+          "text": "Hmm, the user asks to summarize key themes of a passage in exactly 30 words. But the passage is just the same sentence repeated over 100 times"
+        },
+        {
+          "iter": 2,
+          "elapsed_ms": 1788,
+          "text": "We need to summarize the key themes of The Count of Monte Cristo in 30 words. The passage is just repeated identical sentences, so no content to analyze."
+        },
+        {
+          "iter": 3,
+          "elapsed_ms": 1770,
+          "text": "The user has provided a passage that repeats the same sentence many times. The task is to summarize the key themes in 30 words. The repeated sentence states that"
+        }
+      ],
+      "pairwise": [
+        {
+          "pair": "iter1-iter2",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 6,
+          "len_a": 142,
+          "len_b": 153,
+          "len_delta": 11
+        },
+        {
+          "pair": "iter1-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 8,
+          "len_a": 142,
+          "len_b": 161,
+          "len_delta": 19
+        },
+        {
+          "pair": "iter2-iter3",
+          "byte_equal": false,
+          "lcp_chars": 0,
+          "shared_words": 5,
+          "len_a": 153,
+          "len_b": 161,
+          "len_delta": 8
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "noise_floor": {
+      "native_min_lcp": 0,
+      "native_max_lcp": 9,
+      "native_min_shared_words": 4,
+      "native_max_shared_words": 11,
+      "native_all_byte_equal": false
+    },
+    "verdicts": {
+      "native": {
+        "verdict": "PASS",
+        "reason": "all iters non-garbage; lcp range [0..9], shared_words range [4..11]. Metal scheduling noise floor \u2014 used as baseline."
+      },
+      "embedded": {
+        "verdict": "PASS",
+        "reason": "all iters non-garbage; lcp range [0..0], shared_words range [4..6]. vs native baseline: this mode max_lcp=0 (native max=9), max_shared=6 (native max=11). coherence within native noise envelope."
+      },
+      "daemon-shm": {
+        "verdict": "PASS",
+        "reason": "all iters non-garbage; lcp range [9..33], shared_words range [7..14]. vs native baseline: this mode max_lcp=33 (native max=9), max_shared=14 (native max=11). coherence within native noise envelope."
+      },
+      "daemon-tcp": {
+        "verdict": "PASS",
+        "reason": "all iters non-garbage; lcp range [0..103], shared_words range [5..8]. vs native baseline: this mode max_lcp=103 (native max=9), max_shared=8 (native max=11). coherence within native noise envelope."
+      },
+      "daemon-http": {
+        "verdict": "PASS",
+        "reason": "all iters non-garbage; lcp range [0..0], shared_words range [5..8]. vs native baseline: this mode max_lcp=0 (native max=9), max_shared=8 (native max=11). coherence within native noise envelope."
+      }
+    }
+  }
+}

@@ -267,14 +267,23 @@ def _looks_like_garbage(text: str) -> tuple[bool, str]:
 
 
 def _send_chat(history: list[dict]) -> tuple[float, str]:
-    """One chat-completions request with the full accumulated history."""
+    """One chat-completions request with the full accumulated history.
+
+    `max_tokens=256` is large enough to fit DeepSeek-V4's THINKING mode
+    preamble plus a meaningful visible answer. With a tighter budget
+    (e.g. 48), THINKING mode consumes the entire budget on internal
+    reasoning and the visible answer never starts — and worse, the
+    THINKING content occasionally surfaces in Chinese for creative-
+    writing prompts (a model quirk, not a WombatKV bug). 256 gives
+    enough headroom that the answer actually appears in every case
+    observed."""
     import urllib.request
 
     payload = json.dumps(
         {
             "model": "deepseek-v4-flash",
             "messages": history,
-            "max_tokens": 48,
+            "max_tokens": 256,
             "temperature": 0.0,
             "stream": False,
         }

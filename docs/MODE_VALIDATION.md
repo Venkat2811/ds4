@@ -610,6 +610,45 @@ Result file:
 cross-user contamination across 75 turns total = 5 modes × 5 users
 × 3 turns).
 
+### Post-landing investigation (2026-05-19): the THINKING-mode harness flaw
+
+The initial alpha.9 multi-user run (recorded in `multi_user_multiturn_
+alpha9.json`) had `max_tokens=48` per turn, which surfaced an
+**apparent** daemon-shm anomaly: eve's three turns under daemon-shm
+were returned in Chinese while all four other modes produced English.
+Investigation showed this was NOT a WombatKV bug:
+
+1. **Tier-B (tensor-level)**: Re-running `logit_fidelity_test.py`
+   confirmed all 4 WombatKV modes (embedded, daemon-shm, daemon-tcp,
+   daemon-http) produce **byte-identical warm logits** to the native-
+   warm baseline (`top1=271, L∞=0.6671`). K/V byte-roundtrip is
+   correct across every transport. See
+   [`bench_data/logit_fidelity_alpha9_post_http.json`](../bench_data/logit_fidelity_alpha9_post_http.json).
+2. **Determinism**: 3 fresh daemon-shm-only re-runs of the same
+   multi-user prompts produced English in 3/3 — the original
+   Chinese was not reproducible.
+3. **Root cause**: DeepSeek-V4 enters THINKING mode by default for
+   conversational prompts. With `max_tokens=48` the entire budget is
+   consumed by internal reasoning ("We need to answer...", "好的，
+   用户是...") before any visible answer starts. The model
+   occasionally thinks in Chinese for creative-writing prompts (a
+   model quirk independent of WombatKV).
+4. **Fix**: bumped `max_tokens` from 48 to 256 in
+   `multi_user_multiturn.py`. Re-run with the fix produced **0 CJK
+   chars across 75 multi-user turns** in all 5 modes. See
+   [`bench_data/multi_user_multiturn_alpha9_fixed_max_tokens.json`](../bench_data/multi_user_multiturn_alpha9_fixed_max_tokens.json).
+5. **Independent corroboration**: LLM-as-judge evaluation of
+   `coherence_alpha9_post_http.json` rated all 4 WombatKV modes
+   `EQUIVALENT` to native baseline (English fluency, reasoning,
+   absence of degenerate failure modes — see `scripts/llm_judge.py`).
+
+**Lesson**: When evaluating WombatKV with chat-completion harnesses,
+`max_tokens` must be large enough to fit thinking-mode preamble +
+visible answer (≥256 for typical conversational prompts; ≥512 for
+prompts that trigger long internal reasoning). A tight budget
+captures thinking-only and can surface language quirks that look
+like correctness regressions but aren't.
+
 What the speedup numbers actually mean here: intra-conversation
 turn-(2..N) median vs turn-1 median across all 5 users. The natural
 warm-restore path inside a single ds4-server lifecycle (no

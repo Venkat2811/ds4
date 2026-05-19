@@ -1,0 +1,120 @@
+[15:59:05] === mode=native users=5 restart_between=False ===
+[15:59:06]   starting ds4-server (native)
+[16:00:02]   user 1/5: alice (python)
+[16:00:24]     user=alice  turn=1 elapsed=21173ms len=1233 garbage=False first40='We need to answer: "I have a function th'
+[16:00:40]     user=alice  turn=2 elapsed=16679ms len=1044 garbage=False first40='We need to answer: "Once I fix that, wha'
+[16:00:59]     user=alice  turn=3 elapsed=18572ms len=212 garbage=False first40="Sure! Here's a clean single `pytest` tes"
+[16:00:59]   user 2/5: bob (recipe)
+[16:01:21]     user=bob    turn=1 elapsed=22255ms len=139 garbage=False first40='Here’s a quick, cozy one-pan dinner that'
+[16:01:37]     user=bob    turn=2 elapsed=15871ms len=539 garbage=False first40='Absolutely — let’s swap out the coconut '
+[16:01:55]     user=bob    turn=3 elapsed=17546ms len=481 garbage=False first40='Great question — the creamy tomato sauce'
+[16:01:55]   user 3/5: carol (travel)
+[16:02:11]     user=carol  turn=1 elapsed=16064ms len=1133 garbage=False first40='We need to answer: 10 days in Japan in l'
+[16:02:29]     user=carol  turn=2 elapsed=18022ms len=983 garbage=False first40='We need to answer: user wants to skip To'
+[16:02:50]     user=carol  turn=3 elapsed=21823ms len=1069 garbage=False first40="We need to answer the user's latest ques"
+[16:02:50]   user 4/5: dave (linear)
+[16:03:10]     user=dave   turn=1 elapsed=19155ms len=481 garbage=False first40='The rank of a matrix tells you the **dim'
+[16:03:35]     user=dave   turn=2 elapsed=25295ms len=423 garbage=False first40='A 4×4 matrix with rank 2 means the linea'
+[16:04:02]     user=dave   turn=3 elapsed=26818ms len=1311 garbage=False first40='We need to answer: "How does that connec'
+[16:04:02]   user 5/5: eve (creative)
+[16:04:21]     user=eve    turn=1 elapsed=19325ms len=465 garbage=False first40="You've heard correctly: opening with a c"
+[16:04:40]     user=eve    turn=2 elapsed=18915ms len=29 garbage=False first40='Great question. The key to an'
+[16:05:03]     user=eve    turn=3 elapsed=22629ms len=1211 garbage=False first40="We need to answer the user's follow-up q"
+[16:05:04] === mode=embedded users=5 restart_between=False ===
+[16:05:05]   starting ds4-server (embedded)
+[16:05:09]   user 1/5: alice (python)
+[16:05:25]     user=alice  turn=1 elapsed=16754ms len=608 garbage=False first40='The most common cause is simply that you'
+[16:05:42]     user=alice  turn=2 elapsed=16518ms len=147 garbage=False first40='The cleanest approach is to use `-> dict'
+[16:06:01]     user=alice  turn=3 elapsed=19185ms len=1175 garbage=False first40='The user wants a single pytest test that'
+[16:06:02]   user 2/5: bob (recipe)
+[16:06:30]     user=bob    turn=1 elapsed=27868ms len=1074 garbage=False first40='We need to suggest a recipe using chicke'
+[16:06:49]     user=bob    turn=2 elapsed=19576ms len=542 garbage=False first40='Absolutely, we can pivot that easily. Si'
+[16:07:09]     user=bob    turn=3 elapsed=19434ms len=226 garbage=False first40='Great question — timing is everything wh'
+[16:07:09]   user 3/5: carol (travel)
+[16:07:26]     user=carol  turn=1 elapsed=17014ms len=1066 garbage=False first40='We need to answer: "I want to spend 10 d'
+[16:07:43]     user=carol  turn=2 elapsed=16609ms len=994 garbage=False first40="We need to answer: The user says they've"
+[16:08:00]     user=carol  turn=3 elapsed=17622ms len=1013 garbage=False first40='We need to answer: The user asked "How d'
+[16:08:01]   user 4/5: dave (linear)
+[16:08:36]     user=dave   turn=1 elapsed=35855ms len=1113 garbage=False first40='We need to explain rank intuitively. The'
+[16:08:53]     user=dave   turn=2 elapsed=16554ms len=896 garbage=False first40='We need to interpret a 4x4 matrix with r'
+[16:09:12]     user=dave   turn=3 elapsed=19302ms len=1261 garbage=False first40='We need to answer: "How does that connec'
+[16:09:13]   user 5/5: eve (creative)
+[16:09:30]     user=eve    turn=1 elapsed=17380ms len=415 garbage=False first40="You're right to question that rule of th"
+[16:09:46]     user=eve    turn=2 elapsed=16102ms len=1268 garbage=False first40="We need to answer the writer's follow-up"
+[16:10:15]     user=eve    turn=3 elapsed=28583ms len=1228 garbage=False first40="We need to address the writer's latest f"
+[16:10:17] === mode=daemon-shm users=5 restart_between=False ===
+[16:10:35]   starting ds4-server (daemon-shm)
+[16:11:07]   user 1/5: alice (python)
+[16:11:23]     user=alice  turn=1 elapsed=16300ms len=1222 garbage=False first40='We need to answer the user\'s question: "'
+[16:11:45]     user=alice  turn=2 elapsed=22059ms len=1086 garbage=False first40='The user wants to know the cleanest way '
+[16:12:13]     user=alice  turn=3 elapsed=27579ms len=1130 garbage=False first40='The user asks: "And how would I write a '
+[16:12:13]   user 2/5: bob (recipe)
+[16:12:52]     user=bob    turn=1 elapsed=39375ms len=130 garbage=False first40='Here’s a quick, warming Thai-inspired co'
+[16:13:18]     user=bob    turn=2 elapsed=25626ms len=239 garbage=False first40="Absolutely! Since coconut is out, let's "
+[16:13:49]     user=bob    turn=3 elapsed=30791ms len=298 garbage=False first40='Great question — timing is everything. S'
+[16:13:49]   user 3/5: carol (travel)
+[16:14:20]     user=carol  turn=1 elapsed=30471ms len=995 garbage=False first40='We need to answer: 10 days in Japan in l'
+[16:14:52]     user=carol  turn=2 elapsed=32449ms len=1022 garbage=False first40='We need to answer: user wants 10 days in'
+[16:15:18]     user=carol  turn=3 elapsed=25485ms len=901 garbage=False first40='We need to answer: how to get from Kanaz'
+[16:15:18]   user 4/5: dave (linear)
+[16:15:52]     user=dave   turn=1 elapsed=33778ms len=375 garbage=False first40='The rank of a matrix tells you **how man'
+[16:16:22]     user=dave   turn=2 elapsed=30265ms len=345 garbage=False first40='Great question. Let’s build intuition st'
+[16:17:01]     user=dave   turn=3 elapsed=39362ms len=1347 garbage=False first40='We need to address the relationship betw'
+[16:17:02]   user 5/5: eve (creative)
+[16:17:30]     user=eve    turn=1 elapsed=28307ms len=513 garbage=False first40='Great question. The "waking up" opening '
+[16:17:56]     user=eve    turn=2 elapsed=25828ms len=401 garbage=False first40='Good instinct. The trick to in medias re'
+[16:18:25]     user=eve    turn=3 elapsed=28856ms len=1282 garbage=False first40="We need to answer the user's follow-up q"
+[16:18:28] === mode=daemon-tcp users=5 restart_between=False ===
+[16:18:30]   starting ds4-server (daemon-tcp)
+[16:18:35]   user 1/5: alice (python)
+[16:18:51]     user=alice  turn=1 elapsed=15883ms len=73 garbage=False first40='The most common cause is a **missing ret'
+[16:19:22]     user=alice  turn=2 elapsed=30933ms len=1156 garbage=False first40="We need to answer the user's follow-up: "
+[16:19:50]     user=alice  turn=3 elapsed=27507ms len=1264 garbage=False first40='The user is asking a follow-up question:'
+[16:19:50]   user 2/5: bob (recipe)
+[16:20:26]     user=bob    turn=1 elapsed=35761ms len=332 garbage=False first40='Absolutely! With chicken thighs, onion, '
+[16:20:59]     user=bob    turn=2 elapsed=33249ms len=1222 garbage=False first40='We need to adapt the previous recipe bec'
+[16:21:29]     user=bob    turn=3 elapsed=30257ms len=1127 garbage=False first40="We need to respond to the user's follow-"
+[16:21:30]   user 3/5: carol (travel)
+[16:22:03]     user=carol  turn=1 elapsed=33724ms len=1027 garbage=False first40='We need to answer: 10 days in Japan in l'
+[16:22:27]     user=carol  turn=2 elapsed=23520ms len=975 garbage=False first40='We need to answer: user wants to skip To'
+[16:22:57]     user=carol  turn=3 elapsed=30579ms len=968 garbage=False first40='We need to answer: user wants to get fro'
+[16:22:58]   user 4/5: dave (linear)
+[16:23:37]     user=dave   turn=1 elapsed=38931ms len=1117 garbage=False first40='We need to explain rank intuitively, geo'
+[16:24:11]     user=dave   turn=2 elapsed=33980ms len=968 garbage=False first40='We need to answer: "If a 4x4 matrix has '
+[16:24:39]     user=dave   turn=3 elapsed=28088ms len=1208 garbage=False first40='We need to answer: "How does that connec'
+[16:24:39]   user 5/5: eve (creative)
+[16:25:22]     user=eve    turn=1 elapsed=42786ms len=44 garbage=False first40="You've heard right: opening with a chara"
+[16:25:49]     user=eve    turn=2 elapsed=26780ms len=1243 garbage=False first40="We need to answer the user's follow-up q"
+[16:26:24]     user=eve    turn=3 elapsed=35847ms len=1240 garbage=False first40="We need to answer the user's follow-up q"
+[16:26:27] === mode=daemon-http users=5 restart_between=False ===
+[16:26:29]   starting ds4-server (daemon-http)
+[16:26:36]   user 1/5: alice (python)
+[16:26:51]     user=alice  turn=1 elapsed=15453ms len=1238 garbage=False first40='We need to answer the user\'s question: "'
+[16:27:20]     user=alice  turn=2 elapsed=28854ms len=1119 garbage=False first40="We need to answer the user's follow-up: "
+[16:27:52]     user=alice  turn=3 elapsed=31688ms len=1238 garbage=False first40='We need to answer the user\'s question: "'
+[16:27:52]   user 2/5: bob (recipe)
+[16:28:29]     user=bob    turn=1 elapsed=36634ms len=1053 garbage=False first40='We need to suggest a 30-minute recipe us'
+[16:28:56]     user=bob    turn=2 elapsed=27041ms len=133 garbage=False first40='Absolutely! We can pivot that beautifull'
+[16:29:21]     user=bob    turn=3 elapsed=24866ms len=999 garbage=False first40='We need to recommend a starch that can b'
+[16:29:21]   user 3/5: carol (travel)
+[16:29:46]     user=carol  turn=1 elapsed=25327ms len=1099 garbage=False first40='We need to answer: 10 days in Japan in l'
+[16:30:20]     user=carol  turn=2 elapsed=33680ms len=1000 garbage=False first40="We need to address the user's request: T"
+[16:31:01]     user=carol  turn=3 elapsed=40852ms len=999 garbage=False first40='We need to answer the user\'s question: "'
+[16:31:01]   user 4/5: dave (linear)
+[16:31:42]     user=dave   turn=1 elapsed=40502ms len=1006 garbage=False first40='We need to explain rank of a matrix intu'
+[16:32:00]     user=dave   turn=2 elapsed=18334ms len=992 garbage=False first40='We need to answer: For a 4x4 matrix with'
+[16:32:37]     user=dave   turn=3 elapsed=36621ms len=1162 garbage=False first40='We need to answer: "How does that connec'
+[16:32:37]   user 5/5: eve (creative)
+[16:33:09]     user=eve    turn=1 elapsed=32386ms len=356 garbage=False first40='It\'s a fair question — and yes, "waking '
+[16:33:50]     user=eve    turn=2 elapsed=40726ms len=1250 garbage=False first40="We need to answer the user's follow-up q"
+[16:34:27]     user=eve    turn=3 elapsed=36773ms len=1248 garbage=False first40="We need to answer the user's follow-up q"
+
+=== multi_user_multiturn summary ===
+mode           verdict  turn1_med_ms  later_med_ms  speedup  bucket notes
+native         PASS     19324         18743         1.03     —      (none)
+embedded       PASS     17379         18402         0.94     69     intra-user speedup weak: 0.94× (turn-1 median 17379ms vs later median 18402ms)
+daemon-shm     PASS     30470         28217         1.08     176    intra-user speedup weak: 1.08× (turn-1 median 30470ms vs later median 28217ms)
+daemon-tcp     PASS     35761         30418         1.18     69     (none)
+daemon-http    PASS     32385         32683         0.99     71     intra-user speedup weak: 0.99× (turn-1 median 32385ms vs later median 32683ms)
+
+Full results dumped to /tmp/multi-user-alpha11.json

@@ -12458,47 +12458,61 @@ static bool send_internal_logits(server *s, int fd, const char *body) {
 
     ds4_tokens prompt = {0};
     ds4_tokenize_rendered_chat(s->engine, prompt_text, &prompt);
-    free(prompt_text);
 
-    /* Tier-B fidelity: drive the WombatKV load AND save paths
-     * inline, so this endpoint is a self-contained measurement of
-     * "warm restore produces the same logits as cold compute."
+    /* Tier-B fidelity: drive WombatKV's AND ds4-native's warm-
+     * restore paths inline, so this endpoint can measure both
+     * "WombatKV warm vs cold" and "huge-blob warm vs cold" L∞
+     * without depending on chat-completion (which invalidates the
+     * session before we can sample logits — see the v1-v3 post-
+     * mortem in docs/MODE_VALIDATION.md).
      *
-     * Without doing the load ourselves, the test depends on
-     * /v1/chat/completions to engage WombatKV — but that handler
-     * calls ds4_session_invalidate() at the end, wiping the
-     * warm-restored session state before we get to sample logits.
-     * (Three prior iterations of the harness all hit some flavor of
-     * this; see docs/MODE_VALIDATION.md post-mortem.)
+     * Priority mirrors chat-completion: WombatKV first (more
+     * granular block-prefix), huge-blob (text-prefix) fallback.
      *
-     * So this endpoint reuses the chat handler's WombatKV helpers
-     * directly:
-     *   - wmbt_kv_try_load_blocks: lookup_block_prefix +
-     *     get_kv_blocks_borrowed + ds4_session_load_blocks +
-     *     install_raw_tail (from sidecar). Returns loaded token count.
-     *   - ds4_session_sync against the effective prompt: trailing-1
-     *     forward + suffix prefill (no-op if load covered the
-     *     entire prompt).
-     *   - wmbt_kv_save_blocks: stores the chain so the next iter
-     *     can warm-restore.
+     *   wombatkv_loaded > 0: WombatKV restored K/V + install_raw_tail
+     *                        set checkpoint to N-1. sync runs trailing-1.
+     *   hugeblob_loaded > 0: kv_cache_try_load_text restored K/V + set
+     *                        checkpoint to N. We rewind to N-1 so the
+     *                        following sync runs trailing-1 at the
+     *                        SAME position as WombatKV does — apples-
+     *                        to-apples comparison of the two warm-
+     *                        restore paths' logits.
+     *   neither loaded:      sync does full cold prefill.
      *
-     * Iter 1 (cold):  load returns 0, sync does full prefill, save stores blocks.
-     * Iter 2 (warm):  load returns N>0, sync trails 1 forward, save is idempotent.
-     * If WombatKV restored bit-identical K/V, top_logprobs at
-     * position prompt.len-1 is identical between iters.
+     * Saves are AUTOMATIC: WombatKV save via wmbt_kv_save_blocks below;
+     * huge-blob save via kv_cache_store_current on shutdown (the
+     * "persisting current KV cache before shutdown" log line). Kill the
+     * server between iters and the next start re-loads.
      */
     ds4_tokens effective_prompt = {0};
     char *loaded_path = NULL;
-    int loaded_tokens = 0;
+    int wombatkv_loaded = 0;
+    int hugeblob_loaded = 0;
     int prompt_len = (int)prompt.len;
     char err[160];
 
 #ifdef DS4_WOMBATKV
     if (g_wmbt_kv_handle) {
-        loaded_tokens = wmbt_kv_try_load_blocks(s, &prompt, &effective_prompt, &loaded_path);
+        wombatkv_loaded = wmbt_kv_try_load_blocks(s, &prompt, &effective_prompt, &loaded_path);
     }
 #endif
 
+    if (wombatkv_loaded == 0 && s->kv.enabled) {
+        char *hb_path = NULL;
+        uint8_t hb_flags = 0;
+        hugeblob_loaded = kv_cache_try_load_text(
+            s, prompt_text, &effective_prompt, &hb_path, &hb_flags, false);
+        free(hb_path);
+        if (hugeblob_loaded > 0) {
+            /* huge-blob load sets checkpoint to hugeblob_loaded.
+             * Rewind to N-1 so the subsequent sync runs a trailing-1
+             * forward at the same position as WombatKV's path (apples
+             * to apples for the fidelity comparison). */
+            ds4_session_rewind(s->session, hugeblob_loaded - 1);
+        }
+    }
+
+    const int loaded_tokens = wombatkv_loaded > 0 ? wombatkv_loaded : hugeblob_loaded;
     const ds4_tokens *sync_input = (loaded_tokens > 0) ? &effective_prompt : &prompt;
     int sync_rc = ds4_session_sync(s->session, sync_input, err, sizeof(err));
 
@@ -12506,6 +12520,7 @@ static bool send_internal_logits(server *s, int fd, const char *body) {
         ds4_tokens_free(&prompt);
         ds4_tokens_free(&effective_prompt);
         free(loaded_path);
+        free(prompt_text);
         return http_error(fd, s->enable_cors, 500, err);
     }
 
@@ -12520,6 +12535,7 @@ static bool send_internal_logits(server *s, int fd, const char *body) {
 
     ds4_tokens_free(&effective_prompt);
     free(loaded_path);
+    free(prompt_text);
 
     buf b = {0};
     buf_puts(&b, "{\"top_k\":[");
@@ -12528,18 +12544,19 @@ static bool send_internal_logits(server *s, int fd, const char *body) {
         buf_printf(&b, "{\"token_id\":%d,\"logit\":%.7g,\"logprob\":%.7g}",
                    scores[i].id, scores[i].logit, scores[i].logprob);
     }
-    /* loaded_tokens > 0 on iter 2+ means WombatKV warm restore
-     * actually engaged. sample_position is checkpoint.len - 1 — i.e.,
-     * the position of the next-token-after-prompt logits. For a
-     * full-prompt match (load covered everything, no suffix needed)
-     * sample_position == prompt_len - 1. */
+    /* wombatkv_loaded_tokens > 0 on iter 2+ → WombatKV warm restore engaged.
+     * hugeblob_loaded_tokens > 0 → ds4's KV-disk huge-blob warm restore engaged.
+     * Native cold prefill leaves both at 0. */
     const ds4_tokens *now = ds4_session_tokens(s->session);
     int sample_position = (now ? (int)now->len : prompt_len) - 1;
     if (sample_position < 0) sample_position = 0;
     buf_printf(&b,
                "],\"prompt_tokens\":%d,\"top_k_returned\":%d,"
-               "\"sample_position\":%d,\"wombatkv_loaded_tokens\":%d}\n",
-               prompt_len, got, sample_position, loaded_tokens);
+               "\"sample_position\":%d,"
+               "\"wombatkv_loaded_tokens\":%d,"
+               "\"hugeblob_loaded_tokens\":%d}\n",
+               prompt_len, got, sample_position,
+               wombatkv_loaded, hugeblob_loaded);
     bool ok = http_response(fd, s->enable_cors, 200, "application/json", b.ptr);
     buf_free(&b);
     ds4_tokens_free(&prompt);

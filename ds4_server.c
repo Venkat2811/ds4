@@ -9893,6 +9893,7 @@ static bool wmbt_kv_save_blocks(server *s,
             char serr[160] = {0};
             int rc_save = ds4_session_save_raw_tail(s->session, sidecar_mem,
                                                     (uint32_t)tokens->len,
+                                                    (uint32_t)block_tokens,
                                                     serr, sizeof(serr));
             if (rc_save == 0 && fflush(sidecar_mem) == 0) {
                 fclose(sidecar_mem);

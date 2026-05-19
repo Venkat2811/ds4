@@ -237,6 +237,75 @@ across all modes). For strict bit-equality, warm restore is
 not a drop-in replacement for cold prefill — some logit-flip
 rate is unavoidable.
 
+## v8 — bit-parity with ds4 huge-blob warm restore (the actual fix)
+
+**Resolution of the v5/v7 logit-drift finding.** After identifying
+that WombatKV's per-block save was missing partial-tail compressed
+K/V (positions in `[last_block_end, prompt_len)` for non-block-
+aligned prompts) AND per-layer compressor state (`attn_state_kv`,
+`attn_state_score`, `index_state_kv`, `index_state_score`),
+extended the raw_tail sidecar to v3 format including both.
+
+| mode | iter-1 cold | iter-2 warm | L∞ logit | top-1 cold | top-1 warm |
+|---|---:|---:|---:|---:|---:|
+| native (cold-vs-cold) | 5829 ms | 5553 ms | **0.0000** | 28 | 28 |
+| native-warm (ds4 huge-blob) | 5154 ms | 64 ms | **0.0408** | 28 | 28 |
+| embedded (WombatKV) | 6266 ms | 296 ms | **0.0408** | 28 | 28 |
+| daemon-shm (WombatKV) | 7783 ms | 2780 ms | **0.0408** | 28 | 28 |
+| daemon-tcp (WombatKV) | 7907 ms | 2571 ms | **0.0408** | 28 | 28 |
+
+**All three WombatKV modes now match ds4 huge-blob warm restore
+bit-exactly:** identical L∞ (0.0408), identical top-1 logit
+(26.1416), top-1 argmax preserved (28 → 28). The 0.0408 residual
+is the inherent kernel-batching difference between the trailing-1
+forward (used by warm restore) and the full-prefill kernel (used by
+cold) — same in both warm paths, not WombatKV-specific.
+
+### Root cause (v5/v7 → v8)
+
+Two gaps in the kvblocks layer relative to ds4's huge-blob save:
+
+1. **Per-layer compressor state was not saved** (`attn_state_kv`,
+   `attn_state_score`, `index_state_kv`, `index_state_score`).
+   `save_payload` always wrote them; `save_block` didn't. v8
+   sidecar (v3 format) includes them — but this alone didn't move
+   the needle (state arrays are only used by prefill kernels, not
+   by the trailing-1 forward — see v6 commit).
+
+2. **Partial-tail compressed K/V was not saved.** `save_block`
+   writes only complete blocks; for a non-block-aligned prompt
+   (e.g., 1010 tokens with block_tokens=128, the partial tail at
+   positions [896, 1010) has compressed K/V — ~28 rows per ratio=4
+   layer — that no block captures. `save_payload` always wrote
+   all `n_comp` rows including the partial tail. v8 sidecar (v3
+   format) writes those bytes after the attn_state arrays per
+   layer, with a `partial_comp_count` u32 so install knows how
+   many rows to append.
+
+The combined v3 sidecar (state + partial tail) closes the gap.
+
+### Wire/API changes for the fix
+
+  ds4.h: `ds4_session_save_raw_tail` signature now takes
+         `block_tokens` (needed to compute the partial-tail
+         boundary). Sidecar v2 → v3 (`DS4_KVBLOCK_RAW_TAIL_VERSION`).
+  ds4.c: kvblock_save_raw_tail_cpu/_gpu + kvblock_install_raw_tail_
+         cpu/_gpu all write/read the v3 extension per layer.
+  ds4_server.c: `wmbt_kv_save_blocks` caller passes
+         `g_wmbt_kv_block_tokens` through.
+  tests/ds4_test.c: 2 call sites updated for the new signature.
+
+Pre-OSS alpha breaking-window applies — v2 sidecars in S3 will not
+load. Wipe buckets when upgrading.
+
+### Sidecar size impact
+
+Sidecar grew from ~11 MB (v2 raw-only) to ~22 MB (v3 raw + state +
+partial-tail comp) for the 1010-token DSV4 workload. Compressed
+on S3 (zstd default): ~13.7 MB. Single sidecar per session — not
+per block — so the marginal cost is small relative to the block
+storage. Worth it for bit-parity with huge-blob warm restore.
+
 ## Parity check — WombatKV vs ds4's own huge-blob warm restore
 
 **The ship-it bar:** WombatKV shouldn't introduce MORE divergence

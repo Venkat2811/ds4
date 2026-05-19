@@ -300,8 +300,14 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  * checkpoint past the next request's prompt and `ds4_session_sync` would
  * fall through to a full re-prefill. Pass 0 to use `s->checkpoint.len`
  * (the legacy behaviour, only correct when save runs at end of prefill). */
+/* `block_tokens` is the WombatKV/kvblock save granularity. The save
+ * needs it to compute how much compressor K/V the blocks already
+ * captured vs how much remains for the partial-tail extension in the
+ * sidecar (positions in [last_block_end, prompt_tokens_count)).
+ * Pass the same value used by `ds4_session_save_block`. */
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
                               uint32_t prompt_tokens_count,
+                              uint32_t block_tokens,
                               char *err, size_t errlen);
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the

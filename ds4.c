@@ -16730,8 +16730,20 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  * the trailing-partial-block re-prefill cost (the "1500 ms gap" from the
  * cleanup/alpha-prep bench). Alpha breaking-window policy applies — no
  * v1 reader, old envelopes are abandoned. */
-#define DS4_KVBLOCK_RAW_TAIL_VERSION      2u
+#define DS4_KVBLOCK_RAW_TAIL_VERSION      3u
 #define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 28u
+/* v3 extension: after the raw_kv rows, sidecar carries per-layer
+ * compressor state — attn_state_kv + attn_state_score (ratio != 0),
+ * and additionally index_state_kv + index_state_score (ratio == 4).
+ * These are session-wide working buffers the compressor uses across
+ * tokens; without them, install_raw_tail produces measurably
+ * different logits than cold prefill at the prompt boundary (see
+ * v5 finding in ds4/docs/MODE_VALIDATION.md). save_payload (the
+ * huge-blob path) has always saved these; save_block does not, so
+ * the WombatKV/kvblock path needs them in the sidecar to match the
+ * huge-blob's restore fidelity. Header bytes count is unchanged —
+ * extension lives in the per-layer body after raw rows, before the
+ * END sentinel. */
 
 /* Internal: validate block_tokens.
  *
@@ -17029,6 +17041,7 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  * RAW_TAIL envelope. raw_live = min(checkpoint.len, DS4_N_SWA). */
 static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
                                      uint32_t prompt_tokens_count,
+                                     uint32_t block_tokens,
                                      char *err, size_t errlen) {
     /* Save the SWA window AT THE PROMPT BOUNDARY, not at the live (post-decode)
      * position. checkpoint_len_for_envelope is what the install side will use
@@ -17065,6 +17078,54 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
                                     err, errlen) != 0) return -1;
         }
     }
+    /* v3 extension — per-layer compressor state + partial-tail comp.
+     * See DS4_KVBLOCK_RAW_TAIL_VERSION comment above. */
+    const uint32_t last_block_end = block_tokens > 0
+        ? (prompt_tokens_count / block_tokens) * block_tokens
+        : prompt_tokens_count;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (ratio == 0) continue;
+        if (payload_write_bytes(fp, layer->attn_state_kv,
+                                layer_attn_state_bytes(ratio), err, errlen) != 0) return -1;
+        if (payload_write_bytes(fp, layer->attn_state_score,
+                                layer_attn_state_bytes(ratio), err, errlen) != 0) return -1;
+        /* Partial-tail compressed K/V: rows that don't fit in any
+         * complete block — i.e., positions in [last_block_end,
+         * prompt_tokens_count). save_block only covers complete
+         * blocks; without these, the trailing-1 forward at the
+         * prompt boundary reads zero K/V for the missing positions
+         * → ~0.23 logit drift vs cold prefill. */
+        const uint32_t blocks_comp_rows = last_block_end / ratio;
+        const uint32_t partial_comp_rows = (layer->n_comp > blocks_comp_rows)
+            ? (layer->n_comp - blocks_comp_rows) : 0;
+        if (payload_write_u32(fp, partial_comp_rows, err, errlen) != 0) return -1;
+        if (partial_comp_rows > 0) {
+            if (payload_write_bytes(fp,
+                    layer->attn_comp_kv + (uint64_t)blocks_comp_rows * DS4_N_HEAD_DIM,
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    err, errlen) != 0) return -1;
+        }
+        if (ratio == 4) {
+            if (payload_write_bytes(fp, layer->index_state_kv,
+                                    layer_index_state_bytes(ratio), err, errlen) != 0) return -1;
+            if (payload_write_bytes(fp, layer->index_state_score,
+                                    layer_index_state_bytes(ratio), err, errlen) != 0) return -1;
+            /* Same partial-tail logic for indexer K/V. n_index_comp
+             * runs at the same ratio cadence as n_comp for ratio=4. */
+            const uint32_t blocks_index_rows = last_block_end / ratio;
+            const uint32_t partial_index_rows = (layer->n_index_comp > blocks_index_rows)
+                ? (layer->n_index_comp - blocks_index_rows) : 0;
+            if (payload_write_u32(fp, partial_index_rows, err, errlen) != 0) return -1;
+            if (partial_index_rows > 0) {
+                if (payload_write_bytes(fp,
+                        layer->index_comp_kv + (uint64_t)blocks_index_rows * DS4_N_INDEXER_HEAD_DIM,
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        err, errlen) != 0) return -1;
+            }
+        }
+    }
     if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
     return 0;
 }
@@ -17076,6 +17137,7 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
  * oldest-first regardless of the ring's wrap state. */
 static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
                                      uint32_t prompt_tokens_count,
+                                     uint32_t block_tokens,
                                      char *err, size_t errlen) {
     const ds4_gpu_graph *g = &s->graph;
     /* See CPU save above. checkpoint_len in this function = "where the
@@ -17111,20 +17173,72 @@ static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
     /* v2: original_total_tokens — see CPU save above. */
     if (payload_write_u32(fp, checkpoint_len,                     err, errlen) != 0) return -1;
 
-    if (raw_live > 0) {
+    {
         uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
         int rc = 0;
+        if (raw_live > 0) {
+            for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+                const uint32_t raw_first = checkpoint_len - raw_live;
+                for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
+                    const uint32_t pos  = raw_first + r;
+                    const uint32_t phys = pos % g->raw_cap;
+                    rc = payload_write_tensor_span(fp,
+                                                   g->layer_raw_cache[il],
+                                                   (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                                   (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                                   buf, DS4_SESSION_IO_CHUNK,
+                                                   err, errlen);
+                }
+            }
+        }
+        /* v3 extension — per-layer compressor state + partial-tail comp.
+         * See DS4_KVBLOCK_RAW_TAIL_VERSION comment. Byte layout
+         * matches the CPU save for cross-backend interop. */
+        const uint32_t last_block_end = block_tokens > 0
+            ? (prompt_tokens_count / block_tokens) * block_tokens
+            : prompt_tokens_count;
         for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
-            const uint32_t raw_first = checkpoint_len - raw_live;
-            for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
-                const uint32_t pos  = raw_first + r;
-                const uint32_t phys = pos % g->raw_cap;
-                rc = payload_write_tensor_span(fp,
-                                               g->layer_raw_cache[il],
-                                               (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
-                                               (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
-                                               buf, DS4_SESSION_IO_CHUNK,
-                                               err, errlen);
+            const uint32_t ratio = ds4_layer_compress_ratio(il);
+            if (ratio == 0) continue;
+            rc = payload_write_tensor_span(fp, g->layer_attn_state_kv[il], 0,
+                                           layer_attn_state_bytes(ratio),
+                                           buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            if (rc == 0)
+                rc = payload_write_tensor_span(fp, g->layer_attn_state_score[il], 0,
+                                               layer_attn_state_bytes(ratio),
+                                               buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            /* Partial-tail compressed K/V for positions [last_block_end,
+             * prompt_tokens_count). save_block only covers complete blocks. */
+            const uint32_t blocks_comp_rows = last_block_end / ratio;
+            const uint32_t partial_comp_rows =
+                (g->layer_n_comp[il] > blocks_comp_rows)
+                    ? (g->layer_n_comp[il] - blocks_comp_rows) : 0;
+            if (rc == 0) rc = payload_write_u32(fp, partial_comp_rows, err, errlen);
+            if (rc == 0 && partial_comp_rows > 0) {
+                rc = payload_write_tensor_span(fp, g->layer_attn_comp_cache[il],
+                    (uint64_t)blocks_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            }
+            if (rc == 0 && ratio == 4) {
+                rc = payload_write_tensor_span(fp, g->layer_index_state_kv[il], 0,
+                                               layer_index_state_bytes(ratio),
+                                               buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                if (rc == 0)
+                    rc = payload_write_tensor_span(fp, g->layer_index_state_score[il], 0,
+                                                   layer_index_state_bytes(ratio),
+                                                   buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                const uint32_t blocks_index_rows = last_block_end / ratio;
+                const uint32_t partial_index_rows =
+                    (g->layer_n_index_comp[il] > blocks_index_rows)
+                        ? (g->layer_n_index_comp[il] - blocks_index_rows) : 0;
+                if (rc == 0) rc = payload_write_u32(fp, partial_index_rows, err, errlen);
+                if (rc == 0 && partial_index_rows > 0) {
+                    rc = payload_write_tensor_span(fp, g->layer_index_comp_cache[il],
+                        (uint64_t)blocks_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                }
             }
         }
         free(buf);
@@ -17137,6 +17251,7 @@ static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
 
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
                               uint32_t prompt_tokens_count,
+                              uint32_t block_tokens,
                               char *err, size_t errlen) {
     if (!s || !fp) {
         payload_set_err(err, errlen, "ds4_session_save_raw_tail: null arg");
@@ -17158,7 +17273,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
         return -1;
     }
     if (ds4_session_is_cpu(s)) {
-        return kvblock_save_raw_tail_cpu(s, fp, prompt_tokens_count, err, errlen);
+        return kvblock_save_raw_tail_cpu(s, fp, prompt_tokens_count, block_tokens, err, errlen);
     }
 #ifdef DS4_NO_GPU
     payload_set_err(err, errlen,
@@ -17170,7 +17285,7 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
             "ds4_session_save_raw_tail: failed to synchronize Metal before save");
         return -1;
     }
-    return kvblock_save_raw_tail_gpu(s, fp, prompt_tokens_count, err, errlen);
+    return kvblock_save_raw_tail_gpu(s, fp, prompt_tokens_count, block_tokens, err, errlen);
 #endif
 }
 
@@ -17265,6 +17380,49 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
          * trailing-token K/V as well, and a future save preserves the
          * same logical positions. */
         layer->n_raw = original_total_tokens;
+    }
+    /* v3 extension — per-layer compressor state + partial-tail comp.
+     * Without these the compressor's running state is zero/stale AND
+     * the trailing-1 forward in ds4_session_sync reads zero comp K/V
+     * for partial-tail positions [last_block_end, original_total_tokens) →
+     * ~0.23 L∞ logit drift vs huge-blob's 0.04 (v5 finding in
+     * docs/MODE_VALIDATION.md). */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (ratio == 0) continue;
+        const uint64_t attn_bytes = layer_attn_state_bytes(ratio);
+        if (payload_read_bytes(fp, layer->attn_state_kv, attn_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        if (payload_read_bytes(fp, layer->attn_state_score, attn_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        /* Partial-tail compressed K/V. After load_blocks, layer->n_comp
+         * is the row count from complete blocks; append partial rows. */
+        uint32_t partial_comp_rows = 0;
+        if (payload_read_u32(fp, &partial_comp_rows, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        if (partial_comp_rows > 0) {
+            if (payload_read_bytes(fp,
+                    layer->attn_comp_kv + (uint64_t)layer->n_comp * DS4_N_HEAD_DIM,
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            layer->n_comp += partial_comp_rows;
+        }
+        if (ratio == 4) {
+            const uint64_t idx_bytes = layer_index_state_bytes(ratio);
+            if (payload_read_bytes(fp, layer->index_state_kv, idx_bytes,
+                                   &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            if (payload_read_bytes(fp, layer->index_state_score, idx_bytes,
+                                   &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            uint32_t partial_index_rows = 0;
+            if (payload_read_u32(fp, &partial_index_rows, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            if (partial_index_rows > 0) {
+                if (payload_read_bytes(fp,
+                        layer->index_comp_kv + (uint64_t)layer->n_index_comp * DS4_N_INDEXER_HEAD_DIM,
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+                layer->n_index_comp += partial_index_rows;
+            }
+        }
     }
     uint32_t end_magic = 0;
     if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
@@ -17385,6 +17543,49 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
                                           (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
                                           buf, DS4_SESSION_IO_CHUNK,
                                           &remaining, err, errlen);
+        }
+    }
+    /* v3 extension — per-layer compressor state + partial-tail comp. */
+    for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = ds4_layer_compress_ratio(il);
+        if (ratio == 0) continue;
+        rc = payload_read_tensor_span(fp, g->layer_attn_state_kv[il], 0,
+                                      layer_attn_state_bytes(ratio),
+                                      buf, DS4_SESSION_IO_CHUNK,
+                                      &remaining, err, errlen);
+        if (rc == 0)
+            rc = payload_read_tensor_span(fp, g->layer_attn_state_score[il], 0,
+                                          layer_attn_state_bytes(ratio),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+        uint32_t partial_comp_rows = 0;
+        if (rc == 0) rc = payload_read_u32(fp, &partial_comp_rows, &remaining, err, errlen) == 0 ? 0 : -1;
+        if (rc == 0 && partial_comp_rows > 0) {
+            rc = payload_read_tensor_span(fp, g->layer_attn_comp_cache[il],
+                (uint64_t)g->layer_n_comp[il] * DS4_N_HEAD_DIM * sizeof(float),
+                (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                buf, DS4_SESSION_IO_CHUNK, &remaining, err, errlen);
+            if (rc == 0) g->layer_n_comp[il] += partial_comp_rows;
+        }
+        if (rc == 0 && ratio == 4) {
+            rc = payload_read_tensor_span(fp, g->layer_index_state_kv[il], 0,
+                                          layer_index_state_bytes(ratio),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+            if (rc == 0)
+                rc = payload_read_tensor_span(fp, g->layer_index_state_score[il], 0,
+                                              layer_index_state_bytes(ratio),
+                                              buf, DS4_SESSION_IO_CHUNK,
+                                              &remaining, err, errlen);
+            uint32_t partial_index_rows = 0;
+            if (rc == 0) rc = payload_read_u32(fp, &partial_index_rows, &remaining, err, errlen) == 0 ? 0 : -1;
+            if (rc == 0 && partial_index_rows > 0) {
+                rc = payload_read_tensor_span(fp, g->layer_index_comp_cache[il],
+                    (uint64_t)g->layer_n_index_comp[il] * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                    (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                    buf, DS4_SESSION_IO_CHUNK, &remaining, err, errlen);
+                if (rc == 0) g->layer_n_index_comp[il] += partial_index_rows;
+            }
         }
     }
     free(buf);

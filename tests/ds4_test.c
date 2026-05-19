@@ -915,8 +915,9 @@ static void test_kvblock_raw_tail_sidecar_roundtrip(void) {
     }
     /* Pass 0 → use s->checkpoint.len (legacy behaviour). The test
      * saves at end-of-prefill, so checkpoint.len already equals the
-     * full prompt length and the legacy path is correct here. */
-    int rc_save = ds4_session_save_raw_tail(src, st_fp, 0, err, sizeof(err));
+     * full prompt length and the legacy path is correct here.
+     * block_tokens=128 matches the test's block save granularity. */
+    int rc_save = ds4_session_save_raw_tail(src, st_fp, 0, 128, err, sizeof(err));
     if (rc_save != 0) fprintf(stderr, "  save_raw_tail failed: %s\n", err);
     TEST_ASSERT(rc_save == 0);
     const long st_bytes = ftell(st_fp);

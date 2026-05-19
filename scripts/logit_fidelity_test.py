@@ -60,6 +60,38 @@ def post_logits(prompt: str, top_k: int) -> dict:
         return json.loads(r.read().decode())
 
 
+def trigger_wombatkv_save_via_chat(prompt: str) -> int:
+    """Send a tiny chat completion to force the WombatKV save path
+    (which lives in ds4_server.c's chat completion handler, NOT in
+    ds4_session_sync). Returns elapsed ms.
+
+    Without this, /v1/internal/logits prefills but does NOT save —
+    so iter 2 has nothing to warm-restore from and the "fidelity"
+    test is really just measuring Metal determinism for two cold
+    prefills. The first version of this harness had that bug; the
+    bucket-count check at the end of every iter is the smoking gun
+    (was 0 in the buggy version, should be > 0 with this fix)."""
+    payload = json.dumps({
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {"role": "system", "content": "You are a literary assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 4,
+        "temperature": 0.0,
+        "stream": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{ms.PORT}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=600) as r:
+        r.read()  # drop response; we only care about side effect
+    return int((time.time() - t0) * 1000)
+
+
 def _start_server_with_debug(mode: str, kvdir: Path, puffer: Path,
                              serverlog: Path) -> "subprocess.Popen":
     """Like mode_smoke.start_server but adds DS4_DEBUG_INTERNAL=1."""
@@ -132,18 +164,44 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         for it in range(1, iters + 1):
             ms.log(f"  iter {it}: starting ds4-server (DS4_DEBUG_INTERNAL=1)")
             _start_server_with_debug(mode, kvdir, puffer, serverlog)
-            ms.log(f"  iter {it}: requesting logits")
+            # First send chat completion to trigger the WombatKV save
+            # path. For WombatKV modes iter 1, this saves blocks to
+            # S3/daemon. For iter 2+, ds4 detects existing blocks and
+            # warm-restores at engine open — chat completion goes fast.
+            chat_ms = trigger_wombatkv_save_via_chat(prompt)
+            ms.log(f"  iter {it}: chat-completion (forces WombatKV save/load) = {chat_ms} ms")
+            # Now sample logits. Session state is whatever the chat completion
+            # left it as (typically prompt + 1 decoded token). The sync inside
+            # the endpoint is a no-op if the session already has the prompt
+            # prefix; top_logprobs returns logits at last position.
+            ms.log(f"  iter {it}: requesting top-K logits at last position")
             t0 = time.time()
             resp = post_logits(prompt, top_k)
             elapsed = time.time() - t0
             ms.log(f"    iter {it}: elapsed={elapsed*1000:.0f} ms, "
                    f"prompt_tokens={resp.get('prompt_tokens')}, "
                    f"top1=token_id={resp['top_k'][0]['token_id']} logit={resp['top_k'][0]['logit']:.4f}")
-            records.append({"iter": it, "elapsed_ms": int(elapsed * 1000), "logits": resp})
+            records.append({
+                "iter": it,
+                "chat_ms": chat_ms,
+                "logits_ms": int(elapsed * 1000),
+                "logits": resp,
+            })
             ms.kill_all_ds4()
             if kvdir.exists():
                 shutil.rmtree(kvdir)
                 kvdir.mkdir()
+        # Verify WombatKV actually engaged — bucket should have objects
+        # (non-native modes only)
+        if mode == "embedded":
+            bk = len(ms.list_bucket_keys("wombatkv-smoke-embedded"))
+            ms.log(f"  [post-run] embedded bucket: {bk} objects (>0 expected for WombatKV save)")
+        elif mode == "daemon-shm":
+            bk = len(ms.list_bucket_keys("wombatkv-smoke-smoke-shm"))
+            ms.log(f"  [post-run] daemon-shm bucket: {bk} objects (>0 expected)")
+        elif mode == "daemon-tcp":
+            bk = len(ms.list_bucket_keys("wombatkv-smoke-smoke-tcp"))
+            ms.log(f"  [post-run] daemon-tcp bucket: {bk} objects (>0 expected)")
         return records
     finally:
         ms.kill_all_ds4()
@@ -299,7 +357,10 @@ def main() -> int:
         print(f"\n[{mode}]")
         for r in recs:
             top1 = r["logits"]["top_k"][0]
-            print(f"  iter {r['iter']}: top1={top1['token_id']} logit={top1['logit']:.4f} elapsed={r['elapsed_ms']}ms")
+            chat_ms = r.get("chat_ms", "?")
+            logits_ms = r.get("logits_ms", r.get("elapsed_ms", "?"))
+            print(f"  iter {r['iter']}: top1={top1['token_id']} logit={top1['logit']:.4f} "
+                  f"chat={chat_ms}ms logits={logits_ms}ms")
 
     print()
     print("=== pairwise diffs ===")

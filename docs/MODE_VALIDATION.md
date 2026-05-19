@@ -178,36 +178,81 @@ Procedure per mode:
 5. Native pairwise = Metal scheduling noise floor in logit space.
 6. WombatKV-mode L∞ should be ≤ native floor + tolerance.
 
-**Results — alpha.7+, prompts of 5 and ~150 tokens:**
+**The first version of this test was flawed — see the post-mortem
+below before relying on the original `logit_fidelity_alpha7.json`
+or `logit_fidelity_medium_alpha7.json` numbers.**
 
-| mode | top-1 token | top-1 logit | L∞ logit (cold↔warm) |
-|---|---:|---:|---:|
-| native (baseline) | 6345 / 11111 | 29.1051 / 25.8455 | **0.0000** |
-| embedded | 6345 / 11111 | 29.1051 / 25.8455 | **0.0000** |
-| daemon-shm | 6345 / 11111 | 29.1051 / 25.8455 | **0.0000** |
-| daemon-tcp | 6345 / 11111 | 29.1051 / 25.8455 | **0.0000** |
+**Canonical result — 1010-token prompt, harness verified to
+actually engage WombatKV save+restore:**
 
-(`6345` = medium prompt; `11111` = 5-token prompt. Top-K size 20.)
+| mode | iter-1 chat (cold) | iter-2 chat (warm) | speedup | bucket | top-1 token | top-1 logit | L∞ logit |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| native (baseline) | 7708 ms | 7683 ms | 1.00× | 0 | 28 | 26.1482 | **0.0000** |
+| embedded | 8238 ms | 346 ms | 23.8× | 15 | 28 | 26.1482 | **0.0000** |
+| daemon-shm | 11354 ms | 995 ms | 11.4× | 18 | 28 | 26.1482 | **0.0000** |
+| daemon-tcp | 23553 ms | 315 ms | 74.8× | 15 | 28 | 26.1482 | **0.0000** |
+
+The `iter-2 chat (warm)` column is the corroborating signal —
+24-75× speedup vs iter-1 cold proves that WombatKV warm restore
+actually happened (without it, iter-2 would be a fresh cold
+prefill ≈ iter-1). The bucket column is the side-channel: 15-18
+objects in S3 per WombatKV mode = real saved K/V blocks.
 
 **Findings:**
 - Metal IS bit-deterministic for ds4 prefill at the logit level —
   native iter1 and iter2 produce **identical top-K logits** to 7
   significant figures.
 - WombatKV-restored K/V produces **identical top-K logits to
-  cold-computed K/V**, across all three WombatKV modes (embedded,
-  daemon-SHM, daemon-TCP).
-- L∞ logit distance = 0.0000 across every cold↔warm pair tested.
-  WombatKV's K/V byte-roundtrip is **bit-fidelity correct**, end-
-  to-end through ds4's attention path.
+  cold-computed K/V**, across all three WombatKV modes.
+- L∞ logit distance = 0.0000 over the top-20 in every cold↔warm
+  pair. WombatKV's K/V byte-roundtrip is **bit-fidelity correct**,
+  end-to-end through ds4's attention path.
 
-The text-level divergence observed in `coherence_test.py` therefore
-does NOT come from WombatKV — it comes from the multi-token decode
-sampling stage (each `ds4_session_eval` of a freshly-decoded token
-adds a row to the cache; small accumulated differences could
-propagate). The prefill+attention path WombatKV plugs into is
-deterministic to bit-equality.
+The text-level divergence observed in `coherence_test.py` does NOT
+come from WombatKV — it comes from downstream of the prefill (the
+multi-token decode sampling stage). Prefill + attention, which is
+the surface WombatKV plugs into, is deterministic to bit-equality.
 
-Result file: [`bench_data/logit_fidelity_medium_alpha7.json`](../bench_data/logit_fidelity_medium_alpha7.json)
+Result file:
+[`bench_data/logit_fidelity_LONG_corrected_alpha7.json`](../bench_data/logit_fidelity_LONG_corrected_alpha7.json)
+
+Canonical bundle (myelon-launch):
+`ai-chat-exports/.0_agentic_engineering/5_tensor_puffer/bench_data/
+2026-05-19_alpha7_strong_fidelity_020107/`
+
+**Post-mortem of the original test bug:**
+
+First version of the harness used the `/v1/internal/logits`
+endpoint directly with short prompts (5 + 150 tokens), saw L∞=0
+across all modes, and I claimed the strong-fidelity proof landed.
+Spot-checking the buckets exposed the bug: `wombatkv-smoke-*`
+buckets had **zero objects** — WombatKV had not actually engaged.
+
+Why:
+- 5 and 150 tokens are both below `KV_CACHE_DEFAULT_MIN_TOKENS =
+  512` in `ds4_server.c`, so ds4 won't save to WombatKV regardless
+  of mode.
+- `/v1/internal/logits` is a debug endpoint that does
+  `ds4_session_sync` + `ds4_session_top_logprobs`. It does NOT call
+  the WombatKV save path (which lives in the chat-completion
+  handler at `ds4_server.c:~10041`, not in `ds4_session_sync`).
+- So iter-1 prefilled but didn't save; iter-2 (after server
+  restart + kvdir wipe) did another cold prefill. Both iters were
+  cold; L∞=0 was just Metal determinism for two repeated cold
+  prefills — not a WombatKV correctness signal.
+
+Fix: harness now sends a `/v1/chat/completions` request BEFORE
+calling `/v1/internal/logits` in each iter. The chat-completion
+hook triggers WombatKV save in iter-1; iter-2's chat-completion
+benefits from warm restore (verified by 24-75× speedup + bucket
+count). Logits endpoint then samples from the session state,
+which is now the warm-restored state for iter 2.
+
+Hard lesson: when the numbers all look right but you're not 100%
+sure the test exercises what you claim it does, check the
+**side-channels** (bucket count, latency profile, log lines) for
+corroborating evidence. The original test passed by coincidence;
+the corrected test passes for the right reason.
 
 ### Strong (`scripts/coherence_test.py`)
 

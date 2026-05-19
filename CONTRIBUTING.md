@@ -135,6 +135,71 @@ To generate a graph for a CSV:
 python3 speed-bench/plot_speed.py /tmp/ds4-speed.csv --title "Machine t/s"
 ```
 
+## WombatKV integration tests
+
+Five harnesses cover the ds4 × WombatKV substrate × five transports
+(native, embedded, daemon-shm, daemon-tcp, daemon-http). Run the
+relevant ones for any change that touches: the WombatKV C ABI,
+sidecar / block on-disk format, save/load hooks in `ds4_server.c`,
+or block-prefix kvblocks code in `ds4.c`.
+
+Pre-req for non-native modes: native MinIO on `127.0.0.1:9200` +
+`libwombatkv.dylib` and `wombatkv-daemon` built in tensorpuffer (see
+docs/MODE_VALIDATION.md for the env setup).
+
+```sh
+# Quick same-host smoke across all transports (~10-15 min):
+python3 scripts/mode_smoke.py all
+
+# Per-mode (~2 min/mode):
+python3 scripts/mode_smoke.py daemon-http
+python3 scripts/mode_smoke.py daemon-tcp
+# ...
+
+# Output coherence under repeated cold/warm cycles (~5-8 min/mode):
+python3 scripts/coherence_test.py
+python3 scripts/coherence_test.py daemon-http --iters 5
+
+# Tensor-level logit fidelity (THE bit-parity proof; ~8-12 min):
+DS4_DEBUG_INTERNAL=1 python3 scripts/logit_fidelity_test.py
+
+# Multi-user multi-turn (5 distinct users × 3 turns each × all 5
+# transports; ~10-15 min):
+python3 scripts/scenarios/multi_user_multiturn.py --mode all \
+    --output /tmp/multi-user-results.json
+
+# Cross-session restore stress (kills+restarts ds4-server between
+# users — exercises the load-from-S3 path explicitly):
+python3 scripts/scenarios/multi_user_multiturn.py --mode all \
+    --restart-between-users
+```
+
+Tier-A byte-roundtrip (the bit-parity foundation, fast, sandbox-safe):
+
+```sh
+cd <tensorpuffer>
+cargo test --workspace --lib --release    # ~50s
+```
+
+What each harness proves:
+
+| harness | level | proves |
+|---|---|---|
+| `mode_smoke.py` | text | server boots cleanly per mode, ≥1 block written to S3, turn-2 warm latency < turn-1 cold, response non-empty |
+| `coherence_test.py` | text | N repeated cold/warm cycles produce reasonable English (no garbage); pairwise LCP / shared-words within native noise floor |
+| `logit_fidelity_test.py` | tensor (logits) | L∞ logit drift cold-vs-warm matches ds4's huge-blob native-warm baseline (≤ 0.05), `wombatkv_loaded_tokens` confirms restore engaged, top-1 token preserved |
+| `multi_user_multiturn.py` | text + concurrency | 5 distinct users with separate histories all produce coherent output; cross-user contamination check; intra-user turn-(2..N) warm-restore wins |
+| `cargo test --lib` | bytes | Tier-A adversarial-payload byte roundtrip through foyer + S3 |
+
+If you only have time for one, `mode_smoke.py all` is the right
+broad spot-check. If your change touches the K/V tensor layout
+(layer counts, head dim, compressor ratios), also run
+`logit_fidelity_test.py` — it's the test that caught the v5/v7 →
+v8 partial-tail / compressor-state gap.
+
+Cross-machine TCP (mode-4 cross-host) and HTTP (mode-5 cross-host)
+have remote-daemon variants — see docs/MODE_VALIDATION.md.
+
 ## Reporting sessions bugs
 
 For debugging a failing generation, keep the trace:

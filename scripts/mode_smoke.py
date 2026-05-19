@@ -52,9 +52,12 @@ S3_KEY = "minioadmin"
 S3_SECRET = "minioadmin"
 PORT = 8000
 TCP_PORT = 7878
+HTTP_PORT = 7879
 
 # Set via --remote-tcp / MODE_SMOKE_REMOTE_TCP for daemon-tcp-remote mode.
 REMOTE_TCP_ADDR = ""
+# Set via --remote-http / MODE_SMOKE_REMOTE_HTTP for daemon-http-remote mode.
+REMOTE_HTTP_ADDR = ""
 
 _PROMPT_FILE = Path("/tmp/pg1184.txt")
 _PROMPT_CHARS = int(os.environ.get("MODE_SMOKE_PROMPT_CHARS", "5000"))
@@ -202,6 +205,8 @@ def start_daemon(transport: str, prefix: str, logfile: Path,
         cmd = [str(DAEMON_BIN), "--prefix", prefix]
     elif transport == "tcp":
         cmd = [str(DAEMON_BIN), "--tcp", f"127.0.0.1:{TCP_PORT}"]
+    elif transport == "http":
+        cmd = [str(DAEMON_BIN), "--http", f"127.0.0.1:{HTTP_PORT}"]
     else:
         raise ValueError(transport)
     with open(logfile, "w") as f:
@@ -267,6 +272,18 @@ def server_env(mode: str, kvdir: Path, puffer: Path) -> dict[str, str]:
         env.update(
             {
                 "DS4_WOMBATKV_DAEMON_TCP": REMOTE_TCP_ADDR,
+            }
+        )
+    elif mode == "daemon-http":
+        env.update(
+            {
+                "DS4_WOMBATKV_DAEMON_HTTP": f"127.0.0.1:{HTTP_PORT}",
+            }
+        )
+    elif mode == "daemon-http-remote":
+        env.update(
+            {
+                "DS4_WOMBATKV_DAEMON_HTTP": REMOTE_HTTP_ADDR,
             }
         )
     else:
@@ -363,7 +380,7 @@ def run_mode(mode: str) -> dict:
     daemonlog = Path(f"/tmp/mode-smoke-{mode}-daemon.log")
 
     kill_all_ds4()
-    if server_mode in ("daemon-shm", "daemon-tcp"):
+    if server_mode in ("daemon-shm", "daemon-tcp", "daemon-http"):
         kill_all_daemon()
 
     # Wipe BOTH the ds4-side caches and the daemon-side foyer/SlateDB
@@ -387,6 +404,8 @@ def run_mode(mode: str) -> dict:
         wipe_bucket("wombatkv-smoke-smoke-shm")
     elif mode == "daemon-tcp":
         wipe_bucket("wombatkv-smoke-smoke-tcp")
+    elif mode == "daemon-http":
+        wipe_bucket("wombatkv-smoke-smoke-http")
 
     daemon_proc = None
     try:
@@ -398,6 +417,11 @@ def run_mode(mode: str) -> dict:
             daemon_proc = start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif server_mode == "daemon-tcp-remote":
             log(f"  remote daemon expected at {REMOTE_TCP_ADDR} — no local start")
+        elif server_mode == "daemon-http":
+            log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{HTTP_PORT})")
+            daemon_proc = start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
+        elif server_mode == "daemon-http-remote":
+            log(f"  remote daemon expected at {REMOTE_HTTP_ADDR} — no local start")
 
         log("  starting ds4-server")
         start_server(server_mode, kvdir, puffer, serverlog)
@@ -429,11 +453,13 @@ def run_mode(mode: str) -> dict:
             bucket = "wombatkv-smoke-smoke-shm"
         elif server_mode == "daemon-tcp":
             bucket = "wombatkv-smoke-smoke-tcp"
+        elif server_mode == "daemon-http":
+            bucket = "wombatkv-smoke-smoke-http"
         bucket_keys: list[str] = []
         if bucket:
             bucket_keys = list_bucket_keys(bucket)
             log(f"    bucket {bucket}: {len(bucket_keys)} object(s)")
-        elif mode == "daemon-tcp-remote":
+        elif mode in ("daemon-tcp-remote", "daemon-http-remote"):
             log("    bucket on remote host's S3 — not inspecting from here")
 
         # Server log signal: did WombatKV engage?
@@ -468,7 +494,7 @@ def run_mode(mode: str) -> dict:
             verdict = "FAIL"
             notes.append("empty response")
         if server_mode != "native":
-            if not bucket_keys and server_mode != "daemon-tcp-remote":
+            if not bucket_keys and server_mode not in ("daemon-tcp-remote", "daemon-http-remote"):
                 notes.append("bucket empty (WombatKV did not write any blocks)")
                 # don't fail on this alone — short prompt may not trigger block write
             if t2 > t1 * 0.9:
@@ -499,17 +525,24 @@ def run_mode(mode: str) -> dict:
                 daemon_proc.wait(timeout=5)
             except Exception:
                 daemon_proc.kill()
-        if server_mode in ("daemon-shm", "daemon-tcp"):
+        if server_mode in ("daemon-shm", "daemon-tcp", "daemon-http"):
             kill_all_daemon()
         # daemon-tcp-remote: remote daemon is the user's responsibility
 
 
 def main() -> int:
-    global REMOTE_TCP_ADDR
+    global REMOTE_TCP_ADDR, REMOTE_HTTP_ADDR
     p = argparse.ArgumentParser()
     p.add_argument(
         "mode",
-        choices=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "all"],
+        choices=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "daemon-http", "daemon-http-remote", "all"],
+    )
+    p.add_argument(
+        "--remote-http",
+        metavar="HOST:PORT",
+        default=os.environ.get("MODE_SMOKE_REMOTE_HTTP", ""),
+        help="For mode daemon-http-remote: address of an already-running "
+             "wombatkv-daemon HTTP listener on another host (e.g. 192.168.x.x:7879).",
     )
     p.add_argument(
         "--remote-tcp",
@@ -525,7 +558,7 @@ def main() -> int:
     if not DS4_BIN.exists():
         log(f"ERROR: {DS4_BIN} does not exist — build ds4-server first")
         return 1
-    if args.mode in ("daemon-shm", "daemon-tcp", "all") and not DAEMON_BIN.exists():
+    if args.mode in ("daemon-shm", "daemon-tcp", "daemon-http", "all") and not DAEMON_BIN.exists():
         log(f"ERROR: {DAEMON_BIN} does not exist — build wombatkv-daemon first")
         return 1
     if args.mode == "daemon-tcp-remote":
@@ -533,8 +566,13 @@ def main() -> int:
             log("ERROR: daemon-tcp-remote requires --remote-tcp HOST:PORT (or MODE_SMOKE_REMOTE_TCP env)")
             return 1
         REMOTE_TCP_ADDR = args.remote_tcp
+    if args.mode == "daemon-http-remote":
+        if not args.remote_http:
+            log("ERROR: daemon-http-remote requires --remote-http HOST:PORT (or MODE_SMOKE_REMOTE_HTTP env)")
+            return 1
+        REMOTE_HTTP_ADDR = args.remote_http
 
-    modes = ["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp"] if args.mode == "all" else [args.mode]
+    modes = ["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"] if args.mode == "all" else [args.mode]
     results = []
     for m in modes:
         try:

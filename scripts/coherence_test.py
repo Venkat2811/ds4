@@ -100,7 +100,7 @@ def run_mode_iters(mode: str, iterations: int) -> dict:
     daemonlog = Path(f"/tmp/coherence-{mode}-daemon.log")
 
     ms.kill_all_ds4()
-    if mode in ("daemon-shm", "daemon-tcp"):
+    if mode in ("daemon-shm", "daemon-tcp", "daemon-http"):
         ms.kill_all_daemon()
 
     for d in (kvdir, puffer, daemon_puffer):
@@ -115,6 +115,8 @@ def run_mode_iters(mode: str, iterations: int) -> dict:
         ms.wipe_bucket("wombatkv-smoke-smoke-shm")
     elif mode == "daemon-tcp":
         ms.wipe_bucket("wombatkv-smoke-smoke-tcp")
+    elif mode == "daemon-http":
+        ms.wipe_bucket("wombatkv-smoke-smoke-http")
 
     daemon_proc = None
     iter_records = []
@@ -127,6 +129,9 @@ def run_mode_iters(mode: str, iterations: int) -> dict:
             daemon_proc = ms.start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif mode == "daemon-tcp-remote":
             ms.log(f"  remote daemon expected at {ms.REMOTE_TCP_ADDR} — no local start")
+        elif mode == "daemon-http":
+            ms.log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{ms.HTTP_PORT})")
+            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
 
         for it in range(1, iterations + 1):
             ms.log(f"  iter {it}: starting ds4-server")
@@ -309,8 +314,8 @@ def main() -> int:
     p.add_argument(
         "modes",
         nargs="*",
-        default=["native", "embedded", "daemon-shm", "daemon-tcp"],
-        help="modes to test (default: all 4 same-host modes)",
+        default=["native", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"],
+        help="modes to test (default: all 5 same-host modes)",
     )
     p.add_argument(
         "--iters",

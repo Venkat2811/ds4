@@ -115,18 +115,22 @@ static void sha1_bytes_hex(const void *ptr, size_t len, char out[41]);
  * exits non-zero — silent fallback to local kv-disk would mask a config
  * error and quietly serve worse perf than the user requested. */
 static void wmbt_kv_init_hooks(const char *model_path) {
-    /* Two paths engage WombatKV:
+    /* Three paths engage WombatKV:
      *   (a) DS4_WOMBATKV_ENABLE=1 — embedded (default) or daemon-SHM
      *       (if WMBT_KV_REMOTE_PREFIX is also set, picked up by
      *       wmbt_kv_init_from_env)
      *   (b) DS4_WOMBATKV_DAEMON_TCP=<host:port> — daemon-TCP
-     *       shortcut, no separate enable env needed (matches the
-     *       docs/ENV.md mode-4 example which advertises this as a
-     *       one-env-var trigger). */
+     *       shortcut, no separate enable env needed.
+     *   (c) DS4_WOMBATKV_DAEMON_HTTP=<host:port> — daemon-HTTP
+     *       shortcut (HTTP/1.1 + rkyv), no separate enable env. Same
+     *       wire envelope as (b) wrapped in HTTP POSTs. Use when the
+     *       link is fronted by an HTTP-aware proxy or load balancer. */
     const char *enable = getenv("DS4_WOMBATKV_ENABLE");
     const char *tcp_addr = getenv("DS4_WOMBATKV_DAEMON_TCP");
+    const char *http_addr = getenv("DS4_WOMBATKV_DAEMON_HTTP");
     const int tcp_shortcut = (tcp_addr && tcp_addr[0]) ? 1 : 0;
-    if ((!enable || !enable[0]) && !tcp_shortcut) return;
+    const int http_shortcut = (http_addr && http_addr[0]) ? 1 : 0;
+    if ((!enable || !enable[0]) && !tcp_shortcut && !http_shortcut) return;
     char derived_fp[25] = {0};
     const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
     if (!fp || strlen(fp) < 24) {
@@ -159,8 +163,16 @@ static void wmbt_kv_init_hooks(const char *model_path) {
      * an in-process embedded store (or the SHM daemon path). The
      * daemon owns the foyer + S3 backing; this ds4 process just
      * shuttles WireRequest frames over a length-prefixed rkyv envelope.
-     * See RFC 0014 + crates/wombatkv-daemon/src/tcp_transport.rs. */
-    if (tcp_shortcut) {
+     * See RFC 0014 + crates/wombatkv-daemon/src/tcp_transport.rs.
+     *
+     * DS4_WOMBATKV_DAEMON_HTTP=<host:port> picks the same daemon over
+     * HTTP/1.1 + rkyv (POST /wmbt/v1/rpc). Both transports talk to the
+     * same dispatch path on the daemon side; HTTP is the
+     * load-balancer-friendly variant. See
+     * crates/wombatkv-daemon/src/http_transport.rs. */
+    if (http_shortcut) {
+        g_wmbt_kv_handle = wmbt_kv_open_http(http_addr);
+    } else if (tcp_shortcut) {
         g_wmbt_kv_handle = wmbt_kv_open_tcp(tcp_addr);
     } else {
         g_wmbt_kv_handle = wmbt_kv_init_from_env();
@@ -190,10 +202,15 @@ static void wmbt_kv_init_hooks(const char *model_path) {
         exit(2);
     }
     g_wmbt_kv_block_tokens = bt;
+    const char *transport = http_shortcut ? "daemon-http"
+                          : tcp_shortcut ? "daemon-tcp"
+                          : (getenv("WMBT_KV_REMOTE_PREFIX") && getenv("WMBT_KV_REMOTE_PREFIX")[0])
+                              ? "daemon-shm"
+                              : "embedded";
     fprintf(stderr,
-            "ds4-server: WombatKV hooks enabled namespace=%s fingerprint=%s "
-            "block_tokens=%d\n",
-            g_wmbt_kv_namespace, g_wmbt_kv_fingerprint,
+            "ds4-server: WombatKV hooks enabled transport=%s namespace=%s "
+            "fingerprint=%s block_tokens=%d\n",
+            transport, g_wmbt_kv_namespace, g_wmbt_kv_fingerprint,
             g_wmbt_kv_block_tokens);
 }
 

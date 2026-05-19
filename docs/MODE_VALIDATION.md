@@ -3,14 +3,15 @@
 Cross-mode validation procedures for ds4 × WombatKV. Complements
 the per-CONTRIBUTING.md correctness regression track.
 
-The four WombatKV modes documented in tensorpuffer's `docs/ENV.md`:
+The five WombatKV modes documented in tensorpuffer's `docs/ENV.md`:
 
 | mode | engine-side env | what's where |
 |---|---|---|
 | 1 — native | (none) | no WombatKV in the picture |
 | 2 — embedded | `DS4_WOMBATKV_ENABLE=1` + S3 env | ds4-server owns the WombatKV store in-process |
 | 3 — daemon SHM | `DS4_WOMBATKV_ENABLE=1` + `WMBT_KV_REMOTE_PREFIX=…` | a `wombatkv-daemon --prefix <name>` on the same host owns the store |
-| 4 — daemon TCP | `DS4_WOMBATKV_DAEMON_TCP=<host:port>` | a `wombatkv-daemon --tcp <addr>` on (typically) a different host owns the store |
+| 4 — daemon TCP | `DS4_WOMBATKV_DAEMON_TCP=<host:port>` | a `wombatkv-daemon --tcp <addr>` on (typically) a different host owns the store, length-prefixed rkyv frames over TCP |
+| 5 — daemon HTTP | `DS4_WOMBATKV_DAEMON_HTTP=<host:port>` | a `wombatkv-daemon --http <addr>` on (typically) a different host owns the store, same rkyv envelope as mode 4 wrapped in HTTP/1.1 POSTs to `/wmbt/v1/rpc` (load-balancer / proxy friendly) |
 
 ## Same-host smoke (`mode_smoke.py`)
 
@@ -554,6 +555,116 @@ For WombatKV-specific perf (cell-B warm restore), see
 the per-mode numbers above. The two bench tracks are
 complementary: `ds4-bench` = engine compute regression;
 `multi_trial_bench.py` = WombatKV warm-restore regression.
+
+## v9 — daemon-http transport landing + 5-user multi-turn validation
+
+Mode 5 (HTTP/1.1 + rkyv) ships alongside the rfc/0018 wire-storage-
+discipline branch. Mirrors the daemon-TCP rkyv envelope (same
+`WireRequest`/`WireResponse` types), wrapped in HTTP/1.1 POSTs to
+`/wmbt/v1/rpc` (Content-Type: `application/x-wombatkv-rkyv`). One
+keep-alive connection per client; no internal length prefix (the
+HTTP `Content-Length` already frames the rkyv-archived body, and
+dropping the prefix keeps the body starts at offset 0 so rkyv's
+8-byte alignment requirement is satisfied without a copy).
+
+The wire envelope discipline RFC 0018 calls for (magic + version +
+CRC + len) layers on later — for the M0 cut, daemon-http and
+daemon-tcp share the bare-rkyv body that's been in the alpha
+breaking-window since alpha.6.
+
+### Same-host smoke (mode 5)
+
+| mode | turn-1 (cold) | turn-2 (warm) | speedup | bucket | verdict |
+|---|---:|---:|---:|---:|---|
+| daemon-http | 12287 ms | 1854 ms | **6.63×** | 10 | PASS |
+
+Single-trial; daemon spawned local, ds4-server pointed at
+`127.0.0.1:7879`. Output coherence + bucket-write signals match the
+daemon-tcp pattern from alpha.7. M3 Max.
+
+### Multi-user multi-turn (the headline alpha.9 validation)
+
+5 distinct user personas — alice (python), bob (recipe), carol
+(travel), dave (linear-algebra), eve (creative-writing) — each
+running a 3-turn conversation with separate accumulated history,
+all against the same ds4-server process. Per-mode metrics: median
+turn-1 (cold) vs median turn-(2..N) (warm) latency across all 5
+users, content-addressed bucket count after all users, cross-user
+contamination check (does user A's reply mention user B's topic
+keyword), and per-turn garbage detector (length / letter-density /
+control-char hygiene; multilingual-aware so DeepSeek's occasional
+Chinese responses on creative prompts don't false-fire).
+
+Result file:
+[`bench_data/multi_user_multiturn_alpha9.json`](../bench_data/multi_user_multiturn_alpha9.json)
+
+| mode | verdict | turn-1 med | later med | speedup | bucket | contamination | garbage |
+|---|---|---:|---:|---:|---:|---:|---:|
+| native      | PASS | 4955 ms  | 5526 ms | 0.90× | — | 0 | 0 |
+| embedded    | PASS | 5786 ms  | 4545 ms | 1.27× | 29 | 0 | 0 |
+| daemon-shm  | PASS | 21593 ms | 7264 ms | 2.97× | 139 | 0 | 0 |
+| daemon-tcp  | PASS | 20006 ms | 4594 ms | 4.35× | 29 | 0 | 0 |
+| daemon-http | PASS | 15270 ms | 4499 ms | 3.39× | 29 | 0 | 0 |
+
+**All 5 modes PASS** the hard criteria (zero garbage outputs, zero
+cross-user contamination across 75 turns total = 5 modes × 5 users
+× 3 turns).
+
+What the speedup numbers actually mean here: intra-conversation
+turn-(2..N) median vs turn-1 median across all 5 users. The natural
+warm-restore path inside a single ds4-server lifecycle (no
+kill+restart between turns) means ds4's own huge-blob native warm
+cache is also engaged, so embedded shows a small speedup (1.27×)
+because both layers compete for the win. The daemon modes show
+stronger intra-conv speedup (3-4×) because cold turn-1 includes
+daemon RTT / SHM ring setup overhead that doesn't recur on later
+turns.
+
+For *cross-session* WombatKV restore (the cell-B story), use the
+`--restart-between-users` flag — it kills ds4-server + wipes the
+local kvdir between users, forcing every warm-restore to come from
+S3 via the WombatKV substrate (no engine-local cache to help):
+
+```sh
+python3 scripts/scenarios/multi_user_multiturn.py --mode all \
+    --restart-between-users
+```
+
+Bucket-count interpretation:
+- `embedded` (29), `daemon-tcp` (29), `daemon-http` (29): same
+  content-addressed dedupe behavior — 5 users × ~6 unique blocks
+  per user after prefix dedup ≈ 29. Block-shaped surfaces work
+  identically across these three transports.
+- `daemon-shm` (139): higher because the SHM daemon path writes one
+  block per save call without the de-dupe step the in-process
+  paths take. Tracked separately as a daemon-SHM optimization
+  opportunity (not a correctness gap; just storage overhead).
+
+Cross-user contamination is the strongest evidence of correct
+multi-tenant block-prefix isolation: 0 mentions across all 75
+turns. User A's reply on Python never references the recipe /
+travel / math / creative topics from other users' conversations.
+This validates that the per-conversation prompt-hash + content-
+addressed block keys produce non-overlapping warm-restore sets
+even when 5 conversations share an `ds4-metal` namespace.
+
+### Tier-A byte-roundtrip + workspace tests at alpha.9
+
+| suite | result | wall time |
+|---|---|---:|
+| `cargo test --workspace --lib --release` | **212/212 PASS** | 50 s |
+| `cargo test -p wombatkv-daemon --lib http_transport` | **4/4 PASS** | <1 s |
+| `cargo test -p wombatkv-cabi --release` | **11/11 PASS** | 2 s |
+
+The 212 (vs alpha.7's 208) reflects 4 new tests in
+`wombatkv-daemon/src/http_transport.rs`: ping roundtrip, put-then-
+get roundtrip, GET-ping returns 200, unknown-route returns 404.
+
+The 2 cabi tests that were stale (`abi_version_bumped_to_1_5_or_higher`,
+`abi_version_at_least_1_6`) — relics of pre-alpha 1.1..1.6 versioning
+that was consolidated to 1.0 — were rewritten to assert the alpha
+consolidation invariant (`ABI_MAJOR == 1`) rather than specific
+minor numbers.
 
 ## CONTRIBUTING.md correctness suite — what was run
 

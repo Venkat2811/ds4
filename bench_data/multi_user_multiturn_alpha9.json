@@ -1,0 +1,801 @@
+[
+  {
+    "mode": "native",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 4993,
+            "text": "We need to answer: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" This is a general debugging question. The user is a Python developer. The most common cause is",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5192,
+            "text": "We need to answer the follow-up question: \"Once I fix that, what's the cleanest way to add type hints so this mistake gets caught before runtime?\" This is about type hints to catch functions returning None when a dict is expected",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 5451,
+            "text": "We need to answer the user's three-part question. The user already got an answer about the most common cause? Actually the user's first message: \"I have a function that returns None when I expected it to return a dict \u2014 what",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 4955,
+            "text": "We need to suggest a recipe using chicken thighs, onion, and coconut milk, under 30 minutes. Also note common substitutions, dietary constraints (none mentioned), storage/reheating, cuisine context, and side pairing. Likely a Thai",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5355,
+            "text": "We need to adapt the previous recipe (which used coconut milk) to use chicken stock, cream, and tomato paste instead. The user has chicken thighs, onion, and now they're allergic to coconut, so they suggest chicken stock, cream",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 5602,
+            "text": "We need to answer the user's question: \"What's a starch I can serve with it that takes the same amount of time?\" This follows from the previous exchange where the user asked for a 30-minute recipe with chicken thighs, onion",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 4815,
+            "text": "We need to answer the user's question about a 10-day trip to Japan in late October, prioritizing regions. The user didn't specify nationality, so visa requirements may not be needed unless asked. But we can note general visa info.",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5799,
+            "text": "We need to answer: user wants 10 days in Japan, late October, skipping Tokyo and Kyoto, using JR Pass. So we need to suggest regions accessible by JR Pass. Late October is autumn foliage season. Suggest places like Osaka (",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 11908,
+            "text": "We need to answer: how to get from Kanazawa to Takayama without a car. The user is planning a Japan itinerary with JR Pass, skipping Tokyo and Kyoto. Kanazawa to Takayama is a common route. Late October",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 4953,
+            "text": "We need to explain rank intuitively, focusing on linear maps. The student asks for an intuitive explanation. We should start with a concrete geometric picture: a linear map from R^n to R^m. Rank is the dimension of the image (",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5706,
+            "text": "We need to answer the student's question: \"If a 4x4 matrix has rank 2, what does that mean about the shape of its image?\" We should start with a concrete geometric picture, then formal definition, then connect",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 6257,
+            "text": "We need to answer the student's new question: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" They are connecting rank to eigenvalues. We need to give an intuitive explanation, then formal, then connect",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 6640,
+            "text": "The writer is asking about a specific craft question: whether waking-up openings are clich\u00e9. They're clearly aware of the common advice and want to know if the rule holds for their project. This is a judgment-call question, not a",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4332,
+            "text": "We need to parse the user's follow-up. They asked about the clich\u00e9 of waking-up openings; I gave a brief answer, but now they're asking about how to do in medias res without confusing the reader. So they want",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4483,
+            "text": "We need to parse the user's follow-up. They asked about the clich\u00e9 of waking-up openings; I gave a brief answer, but now they're asking about how to do in medias res without confusing the reader. So they want",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": null,
+    "bucket_counts_after_each_user": [],
+    "latency_stats": {
+      "turn1_median_ms": 4955,
+      "turn1_min_ms": 4815,
+      "turn1_max_ms": 6640,
+      "later_median_ms": 5526,
+      "later_min_ms": 4332,
+      "later_max_ms": 11908,
+      "intra_user_speedup": 0.9
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "embedded",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 9465,
+            "text": "We need to answer the question: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" The user is asking about a common cause for a function returning None instead of a dict",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4622,
+            "text": "The user asks two things: first, the most common cause for a function returning None when expected to return a dict. Second, once fixed, the cleanest way to add type hints so the mistake is caught before runtime.\n\nThe first part",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 5391,
+            "text": "The user asked two questions: (1) the most common cause for a function returning None instead of a dict, and (2) after fixing that, the cleanest way to add type hints to catch the mistake before runtime. Then they",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 5577,
+            "text": "We need to suggest a recipe using chicken thighs, onion, and coconut milk, in 30 minutes. Likely a Thai-style coconut chicken curry or similar. Keep it simple, use common pantry ingredients (like spices). Mention substitutions. Storage",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4529,
+            "text": "The user has chicken thighs, onion, and a can of coconut milk, but they are allergic to coconut. So they need a substitution. They suggest chicken stock, cream, and tomato paste. That could work as a creamy tomato-based sauce",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4207,
+            "text": "The user wants a starch suggestion that takes about 30 minutes, matching the chicken dish. Likely rice, but need to account for cooking time. Could be quick-cooking rice (parboiled or instant), or maybe couscous or",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 5675,
+            "text": "We need to answer: 10 days in Japan in late October. Which regions to prioritize? Late October is autumn, good for foliage, mild weather. For 10 days, typical first-timers do Tokyo + Kyoto + maybe Osaka",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5436,
+            "text": "We need to answer: User has been to Tokyo and Kyoto, wants 10 days in Japan in late October, using JR Pass. They want regions to prioritize, but now specify skip Tokyo/Kyoto. So we need alternative regions accessible",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4245,
+            "text": "The user is now asking a specific logistics question: how to get from Kanazawa to Takayama without a car. They mentioned JR Pass earlier, so likely they want train/bus options. We need to provide specific routes, apps,",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 5786,
+            "text": "We need to explain rank intuitively, geometrically. The student asks for intuitive explanation. We should start with concrete geometric picture: think of a matrix as a linear transformation from R^n to R^m. Rank is dimension of the image (",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4590,
+            "text": "We need to answer the student's specific question: \"If a 4x4 matrix has rank 2, what does that mean about the shape of its image?\" The student is asking about the shape of the image. We should connect",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4505,
+            "text": "The student is asking about connection between rank and eigenvalues. Specifically: \"does rank 2 imply two non-zero eigenvalues?\" We need to answer carefully. For a square matrix, rank is the dimension of the column space (image). Eigenvalues",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 10262,
+            "text": "We need to respond to the writer's question: \"I'm writing a short story that opens with a character waking up. I've heard that's a clich\u00e9 \u2014 is it really?\" The user is asking for feedback on the clich\u00e9",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4436,
+            "text": "We need to answer the second question about in medias res openings without confusing readers. The user asks: \"What's a way to open in medias res without burying the reader in confusing names and places?\" This is a follow-up",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4561,
+            "text": "We need to respond to the writer's questions. They asked about the clich\u00e9 of waking up, then about in medias res without confusion, and now about balancing dialogue and interiority in that kind of opening. The assistant should address all",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-embedded",
+    "bucket_counts_after_each_user": [
+      5,
+      10,
+      17,
+      22,
+      29
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 5786,
+      "turn1_min_ms": 5577,
+      "turn1_max_ms": 10262,
+      "later_median_ms": 4545,
+      "later_min_ms": 4207,
+      "later_max_ms": 5436,
+      "intra_user_speedup": 1.27
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "daemon-shm",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 14160,
+            "text": "We need to answer the user's question: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" The user is likely a working software engineer, so they want a concise,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4821,
+            "text": "The user asks: \"Once I fix that, what's the cleanest way to add type hints so this mistake gets caught before runtime?\" The previous context was about a function returning None instead of a dict. So they want to know how",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 17408,
+            "text": "We need to answer the user's question about adding type hints to catch a function returning None instead of dict before runtime, and also about writing a single pytest test that exercises both success and failure paths. The user is a working software engineer,",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 30300,
+            "text": "We need to provide a recipe using chicken thighs, onion, and coconut milk, under 30 minutes. Also note substitutions, dietary constraints (none mentioned), storage/reheating, cuisine, side pairing. Let's think of a simple Thai",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 8995,
+            "text": "Okay, the user initially asked for a recipe with chicken thighs, onion, and coconut milk. I suggested a Thai coconut curry. Now they say they're allergic to coconut, so we need to adapt. They have chicken stock, cream,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 6881,
+            "text": "The user wants a starch that takes the same amount of time as the chicken dish. The chicken dish (with the coconut-free adaptation) takes about 25-30 minutes. So need a starch that can be ready in that time. Options",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 16469,
+            "text": "We need to answer: 10 days in Japan in late October. Prioritize regions. Late October is autumn, great for foliage. Must mention best season (autumn), weather (cool, pleasant). Visa: user didn't specify nationality",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 13165,
+            "text": "We need to answer: skipping Tokyo and Kyoto, use JR Pass. User wants regions to prioritize for 10 days in late October. Must mention autumn foliage, weather. Visa not specified, but note general requirement: US, UK, etc",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4990,
+            "text": "We need to answer: transport from Kanazawa to Takayama without car. Must mention specific apps/websites: Hyperdia, Japan Rail, or bus. Also note JR Pass coverage? The user said \"using just the JR Pass",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 21593,
+            "text": "We need to explain rank intuitively. The user asks: \"intuitively explain what the rank of a matrix tells me about the linear map it represents\". So we need to connect rank to geometric meaning: dimension of the image (column space",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 7437,
+            "text": "We need to answer the user's question: \"If a 4x4 matrix has rank 2, what does that mean about the shape of its image?\" The user wants an intuitive explanation connecting rank to the linear map's image.",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 7085,
+            "text": "We need to answer: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" The user is asking about the relationship between rank and eigenvalues. We need to clarify that rank does not directly imply number of non",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 30293,
+            "text": "\u597d\u7684\uff0c\u7528\u6237\u662f\u4e00\u4f4d\u5199\u77ed\u7bc7\u5c0f\u8bf4\u7684\u4f5c\u8005\uff0c\u6b63\u5728\u95ee\u4e00\u4e2a\u5173\u4e8e\u6545\u4e8b\u5f00\u5934\u7684\u6280\u672f\u6027\u95ee\u9898\uff1a\u4ee5\u89d2\u8272\u9192\u6765\u4f5c\u4e3a\u5f00\u5934\u662f\u5426\u771f\u7684\u662f\u4e2a\u9648\u8bcd\u6ee5\u8c03\u3002\u8fd9\u4e2a\u95ee\u9898\u5f88\u5177\u4f53\uff0c\u5c5e\u4e8e\u5199\u4f5c\u6280\u5de7\u54a8\u8be2\uff0c\u9700\u8981\u7ed9\u51fa\u4e13\u4e1a\u4e14\u5e73\u8861\u7684",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 7091,
+            "text": "\u597d\u7684\uff0c\u7528\u6237\u8fd9\u6b21\u95ee\u7684\u662f\u201c\u5982\u4f55\u5728\u4e2d\u6bb5\u5f00\u573a\u65f6\u4e0d\u8ba9\u8bfb\u8005\u88ab\u4e00\u5806\u540d\u5b57\u548c\u5730\u70b9\u641e\u7cca\u6d82\u201d\u3002\u8fd9\u76f4\u63a5\u63a5\u7eed\u4e86\u4e0a\u4e00\u4e2a\u5173\u4e8e\u201c\u9192\u6765\u201d\u4f5c\u4e3a\u5f00\u5934\u7684\u5bf9\u8bdd\u2014\u2014\u7528\u6237\u663e\u7136\u5728\u8ba4\u771f\u8003\u8651\u66ff\u4ee3\u65b9\u6848\uff0c\u800c\u4e14\u7279\u522b\u62c5\u5fc3",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 15719,
+            "text": "\u597d\u7684\uff0c\u7528\u6237\u73b0\u5728\u95ee\u7684\u662f\u201c\u5982\u4f55\u5728\u8fd9\u79cd\u5f00\u7bc7\u4e2d\u5e73\u8861\u5bf9\u8bdd\u548c\u5185\u5fc3\u72ec\u767d\u201d\u3002\u8fd9\u91cc\u7684\u201c\u8fd9\u79cd\u5f00\u7bc7\u201d\u6307\u7684\u662f\u4e4b\u524d\u8ba8\u8bba\u7684\u201c\u4e2d\u6bb5\u5f00\u573a\u201d\u90a3\u79cd\u65b9\u5f0f\u3002\u7528\u6237\u663e\u7136\u5728\u5c1d\u8bd5\u6784\u5efa\u4e00\u4e2a\u6709\u6548\u7684\u6545\u4e8b\u5165\u53e3\uff0c\u5e76\u4e14",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-shm",
+    "bucket_counts_after_each_user": [
+      23,
+      53,
+      78,
+      108,
+      139
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 21593,
+      "turn1_min_ms": 14160,
+      "turn1_max_ms": 30300,
+      "later_median_ms": 7264,
+      "later_min_ms": 4821,
+      "later_max_ms": 17408,
+      "intra_user_speedup": 2.97
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "daemon-tcp",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 5560,
+            "text": "We need to answer: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" This is a debugging question. The user likely expects a dict but gets None. The most common",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4461,
+            "text": "The user asks: \"Once I fix that, what's the cleanest way to add type hints so this mistake gets caught before runtime?\" So first, we need to address the \"most common cause\" of returning None instead of a dict",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 5190,
+            "text": "The user is asking multiple things: first, \"most common cause\" of returning None instead of a dict; then, \"cleanest way to add type hints so this mistake gets caught before runtime\"; then, \"how to write a single",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 20006,
+            "text": "We need to provide a recipe using chicken thighs, onion, and coconut milk. That suggests a creamy, aromatic dish. Likely Thai-style curry or a braise. Since it's 30 minutes, we need to use quick methods:",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 7374,
+            "text": "The user has chicken thighs, onion, coconut milk (but allergic), plus chicken stock, cream, and tomato paste. So we need to adapt the recipe to avoid coconut. A coconut milk based dish becomes something like a creamy tomato chicken bra",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4295,
+            "text": "The user asks for a starch that takes about 30 minutes. Options: rice (white rice ~20 min, brown ~45 min), pasta (10 min), couscous (5 min), quinoa (15 min), bread, potatoes (",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 20352,
+            "text": "We need to answer: 10 days in Japan in late October. User asks what regions to prioritize. Late October is autumn, good for foliage. Typical itinerary: Tokyo, Kyoto, Osaka, maybe Hiroshima or Nikko. But 10",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5457,
+            "text": "We need to answer: The user says skip Tokyo and Kyoto, and wants a good itinerary using just the JR Pass. They have 10 days in late October. They've been to Tokyo/Kyoto before. So we need alternative regions",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4164,
+            "text": "We need to answer: The user now asks a specific logistics question: How to get from Kanazawa to Takayama without a car. This is a follow-up to the previous conversation about a Japan itinerary using JR Pass, skipping Tokyo/K",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 25253,
+            "text": "We need to explain rank of a matrix intuitively, focusing on the linear map it represents. The user asks for an intuitive explanation. We should start with a concrete geometric picture, then formal definition, then connect. Use column vectors, real numbers",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4421,
+            "text": "The user asks about a 4x4 matrix with rank 2, meaning the image (column space) is 2-dimensional. So the map from R^4 to R^4 has a 2-dimensional image. That means it",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4185,
+            "text": "The user wants to connect rank 2 to eigenvalues. Not necessarily, because eigenvalues depend on the matrix being square and possibly not diagonalizable. But rank gives dimension of image, eigenvalues relate to scaling of eigenvectors. However, for a symmetric matrix",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 7707,
+            "text": "We need to answer the question: \"I'm writing a short story that opens with a character waking up. I've heard that's a clich\u00e9 \u2014 is it really?\" The user is asking for advice as a fiction editor. They want",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4728,
+            "text": "We need to answer the question about opening in medias res without confusing the reader. The user is a writer seeking craft advice. As an editor, I should give concrete, actionable feedback. I'll explain techniques: anchoring through sensory detail,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 14885,
+            "text": "We need to answer the question about balancing dialogue and interiority in an in medias res opening. The user is a writer seeking craft advice. As an editor, I'll give concrete, actionable feedback. I'll explain techniques: using dialogue",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-tcp",
+    "bucket_counts_after_each_user": [
+      5,
+      10,
+      17,
+      22,
+      29
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 20006,
+      "turn1_min_ms": 5560,
+      "turn1_max_ms": 25253,
+      "later_median_ms": 4594,
+      "later_min_ms": 4164,
+      "later_max_ms": 14885,
+      "intra_user_speedup": 4.35
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "daemon-http",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 5481,
+            "text": "We need to answer: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" The user is a Python programmer asking about a common bug where a function returns None instead of a",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4259,
+            "text": "The user asked two things: first, \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" Then they follow up: \"Once I fix that, what's the cleanest",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 5005,
+            "text": "We need to answer: The user asked two questions: 1) \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" 2) \"Once I fix that, what",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 22813,
+            "text": "We need to suggest a 30-minute recipe using chicken thighs, onion, and coconut milk. Also need to consider substitutions, storage/reheating, cuisine, pairing. Likely a Thai-style coconut chicken curry or something similar. Let's",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4525,
+            "text": "We need to adapt the recipe. The user has chicken thighs, onion, and now chicken stock, cream, and tomato paste instead of coconut milk. They are allergic to coconut. So we need to create a 30-minute recipe using those",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 4252,
+            "text": "The user wants a starch side dish that takes about the same amount of time as the main (30 minutes). Common starches: rice (white rice ~20 min, brown rice longer), couscous (5 min), pasta (10 min",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 15270,
+            "text": "We need to answer: 10 days in Japan in late October. Regions to prioritize. Late October is autumn, nice weather, foliage starting. Typical first-timers do Tokyo, Kyoto, maybe Osaka, Nara. With 10",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 5225,
+            "text": "We need to answer: user wants 10 days in Japan in late October, skipping Tokyo and Kyoto, using JR Pass. So we need to suggest regions accessible by JR rail, likely other cities like Osaka, Hiroshima, Fukuoka,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 3986,
+            "text": "We need to answer: user wants to know how to get from Kanazawa to Takayama without a car. This is a specific transport query. Kanazawa and Takayama are in central Japan. There is no direct train? Actually",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 6283,
+            "text": "We need to explain rank intuitively. The user asks: \"Can you intuitively explain what the rank of a matrix tells me about the linear map it represents?\" So we should start with a geometric picture, then formal definition, then connect. Also",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4474,
+            "text": "We need to answer the specific question: 4x4 matrix with rank 2, what does that mean about the shape of its image? Since rank is dimension of image. For a linear map from R^4 to R^4",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 6410,
+            "text": "The user asks: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" This is a follow-up to the previous question. We need to relate rank to eigenvalues. Not necessarily: rank 2 does not",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 23584,
+            "text": "The user is asking about whether waking up as an opening is a clich\u00e9. This is a craft question about openings in fiction. I should give a nuanced answer that acknowledges the clich\u00e9 but explains when it works and when it doesn't,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 4352,
+            "text": "Good question. The \"waking",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 18359,
+            "text": "The user is asking about balancing dialogue and interiority in a specific kind of opening \u2014 likely an in medias res opening, building on the previous question about avoiding confusion. I need to give concrete craft advice that ties directly to the scenario of",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-http",
+    "bucket_counts_after_each_user": [
+      5,
+      10,
+      17,
+      22,
+      29
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 15270,
+      "turn1_min_ms": 5481,
+      "turn1_max_ms": 23584,
+      "later_median_ms": 4499,
+      "later_min_ms": 3986,
+      "later_max_ms": 18359,
+      "intra_user_speedup": 3.39
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  }
+]

@@ -145,7 +145,7 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
     daemonlog = Path(f"/tmp/logit-{mode}-daemon.log")
 
     ms.kill_all_ds4()
-    if server_mode in ("daemon-shm", "daemon-tcp"):
+    if server_mode in ("daemon-shm", "daemon-tcp", "daemon-http"):
         ms.kill_all_daemon()
     for d in (kvdir, puffer, daemon_puffer):
         if d.exists():
@@ -158,6 +158,8 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         ms.wipe_bucket("wombatkv-smoke-smoke-shm")
     elif server_mode == "daemon-tcp":
         ms.wipe_bucket("wombatkv-smoke-smoke-tcp")
+    elif server_mode == "daemon-http":
+        ms.wipe_bucket("wombatkv-smoke-smoke-http")
 
     daemon_proc = None
     records = []
@@ -168,6 +170,9 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         elif mode == "daemon-tcp":
             ms.log(f"  starting wombatkv-daemon (TCP 127.0.0.1:{ms.TCP_PORT})")
             daemon_proc = ms.start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
+        elif mode == "daemon-http":
+            ms.log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{ms.HTTP_PORT})")
+            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
 
         for it in range(1, iters + 1):
             ms.log(f"  iter {it}: starting ds4-server (DS4_DEBUG_INTERNAL=1)")
@@ -219,6 +224,9 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         elif mode == "daemon-tcp":
             bk = len(ms.list_bucket_keys("wombatkv-smoke-smoke-tcp"))
             ms.log(f"  [post-run] daemon-tcp bucket: {bk} objects (>0 expected)")
+        elif mode == "daemon-http":
+            bk = len(ms.list_bucket_keys("wombatkv-smoke-smoke-http"))
+            ms.log(f"  [post-run] daemon-http bucket: {bk} objects (>0 expected)")
         return records
     finally:
         ms.kill_all_ds4()
@@ -228,7 +236,7 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
                 daemon_proc.wait(timeout=5)
             except Exception:
                 daemon_proc.kill()
-        if mode in ("daemon-shm", "daemon-tcp"):
+        if mode in ("daemon-shm", "daemon-tcp", "daemon-http"):
             ms.kill_all_daemon()
 
 
@@ -346,7 +354,7 @@ def main() -> int:
     p.add_argument(
         "modes",
         nargs="*",
-        default=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp"],
+        default=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"],
     )
     p.add_argument("--iters", type=int, default=DEFAULT_ITERS)
     p.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)

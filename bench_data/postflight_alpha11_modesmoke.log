@@ -1,0 +1,157 @@
+[15:40:43] === mode: native ===
+[15:40:44]   starting ds4-server
+[15:41:31]   turn 1 (cold prefill)
+[15:41:39]     turn-1 elapsed = 7809 ms, first 40 chars: 'We need to summarize key themes of The C'
+[15:41:41]   restarting ds4-server
+[15:41:43]   turn 2 (warm restore for wombatkv modes)
+[15:41:51]     turn-2 elapsed = 7593 ms, first 40 chars: 'The user has provided a passage that is '
+[15:41:51]     coherence: lcp=0 chars / shared_words=5 / lengths t1=158 t2=155
+[15:41:52] === mode: native-warm ===
+[15:41:52]   starting ds4-server
+[15:41:55]   turn 1 (cold prefill)
+[15:42:03]     turn-1 elapsed = 7676 ms, first 40 chars: 'We need to summarize the key themes of T'
+[15:42:04]   restarting ds4-server
+[15:42:06]   turn 2 (warm restore for wombatkv modes)
+[15:42:08]     turn-2 elapsed = 1717 ms, first 40 chars: 'We need to summarize the key themes of T'
+[15:42:08]     coherence: lcp=104 chars / shared_words=12 / lengths t1=149 t2=157
+[15:42:09] === mode: embedded ===
+[15:42:10]   starting ds4-server
+[15:42:14]   turn 1 (cold prefill)
+[15:42:22]     turn-1 elapsed = 8333 ms, first 40 chars: 'We need to summarize the key themes of T'
+[15:42:24]   restarting ds4-server
+[15:42:27]   turn 2 (warm restore for wombatkv modes)
+[15:42:29]     turn-2 elapsed = 1889 ms, first 40 chars: 'The user provides a passage that repeats'
+[15:42:29]     bucket wombatkv-smoke-embedded: 10 object(s)
+[15:42:29]     server WombatKV log line: WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.
+[15:42:29]     coherence: lcp=0 chars / shared_words=4 / lengths t1=149 t2=151
+[15:42:30] === mode: daemon-shm ===
+[15:42:31]   starting wombatkv-daemon (SHM prefix=smoke-shm)
+[15:42:49]   starting ds4-server
+[15:43:34]   turn 1 (cold prefill)
+[15:43:50]     turn-1 elapsed = 15368 ms, first 40 chars: 'We need to summarize the key themes of T'
+[15:43:53]   restarting ds4-server
+[15:44:09]   turn 2 (warm restore for wombatkv modes)
+[15:44:11]     turn-2 elapsed = 1983 ms, first 40 chars: 'The user has provided a passage that is '
+[15:44:11]     bucket wombatkv-smoke-smoke-shm: 16 object(s)
+[15:44:11]     server WombatKV log line: WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.
+[15:44:11]     coherence: lcp=0 chars / shared_words=3 / lengths t1=155 t2=148
+[15:44:15] === mode: daemon-tcp ===
+[15:44:16]   starting wombatkv-daemon (TCP 127.0.0.1:7878)
+[15:44:17]   starting ds4-server
+[15:44:32]   turn 1 (cold prefill)
+[15:44:46]     turn-1 elapsed = 14835 ms, first 40 chars: 'We need to summarize the key themes of T'
+[15:44:49]   restarting ds4-server
+[15:44:53]   turn 2 (warm restore for wombatkv modes)
+[15:44:55]     turn-2 elapsed = 1970 ms, first 40 chars: 'The user provides a passage that repeate'
+[15:44:55]     bucket wombatkv-smoke-smoke-tcp: 10 object(s)
+[15:44:55]     server WombatKV log line: WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.
+[15:44:55]     coherence: lcp=0 chars / shared_words=4 / lengths t1=159 t2=159
+[15:44:58] === mode: daemon-http ===
+[15:44:59]   starting wombatkv-daemon (HTTP 127.0.0.1:7879)
+[15:45:00]   starting ds4-server
+[15:45:21]   turn 1 (cold prefill)
+[15:45:41]     turn-1 elapsed = 20069 ms, first 40 chars: 'The user provided a passage that is a re'
+[15:45:43]   restarting ds4-server
+[15:45:47]   turn 2 (warm restore for wombatkv modes)
+[15:45:49]     turn-2 elapsed = 1939 ms, first 40 chars: 'The user provides a passage that repeats'
+[15:45:49]     bucket wombatkv-smoke-smoke-http: 10 object(s)
+[15:45:49]     server WombatKV log line: WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.
+[15:45:49]     coherence: lcp=16 chars / shared_words=5 / lengths t1=155 t2=165
+
+=== summary ===
+{
+  "mode": "native",
+  "verdict": "PASS",
+  "turn1_ms": 7808,
+  "turn2_ms": 7593,
+  "speedup": 1.03,
+  "bucket_keys": 0,
+  "wombat_init": "",
+  "coherence": {
+    "lcp_chars": 0,
+    "shared_words": 5,
+    "len_t1": 158,
+    "len_t2": 155
+  },
+  "notes": []
+}
+{
+  "mode": "native-warm",
+  "verdict": "PASS",
+  "turn1_ms": 7676,
+  "turn2_ms": 1717,
+  "speedup": 4.47,
+  "bucket_keys": 0,
+  "wombat_init": "",
+  "coherence": {
+    "lcp_chars": 104,
+    "shared_words": 12,
+    "len_t1": 149,
+    "len_t2": 157
+  },
+  "notes": []
+}
+{
+  "mode": "embedded",
+  "verdict": "PASS",
+  "turn1_ms": 8333,
+  "turn2_ms": 1889,
+  "speedup": 4.41,
+  "bucket_keys": 10,
+  "wombat_init": "WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.",
+  "coherence": {
+    "lcp_chars": 0,
+    "shared_words": 4,
+    "len_t1": 149,
+    "len_t2": 151
+  },
+  "notes": []
+}
+{
+  "mode": "daemon-shm",
+  "verdict": "PASS",
+  "turn1_ms": 15368,
+  "turn2_ms": 1983,
+  "speedup": 7.75,
+  "bucket_keys": 16,
+  "wombat_init": "WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.",
+  "coherence": {
+    "lcp_chars": 0,
+    "shared_words": 3,
+    "len_t1": 155,
+    "len_t2": 148
+  },
+  "notes": []
+}
+{
+  "mode": "daemon-tcp",
+  "verdict": "PASS",
+  "turn1_ms": 14834,
+  "turn2_ms": 1969,
+  "speedup": 7.53,
+  "bucket_keys": 10,
+  "wombat_init": "WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.",
+  "coherence": {
+    "lcp_chars": 0,
+    "shared_words": 4,
+    "len_t1": 159,
+    "len_t2": 159
+  },
+  "notes": []
+}
+{
+  "mode": "daemon-http",
+  "verdict": "PASS",
+  "turn1_ms": 20068,
+  "turn2_ms": 1938,
+  "speedup": 10.35,
+  "bucket_keys": 10,
+  "wombat_init": "WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.",
+  "coherence": {
+    "lcp_chars": 16,
+    "shared_words": 5,
+    "len_t1": 155,
+    "len_t2": 165
+  },
+  "notes": []
+}

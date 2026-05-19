@@ -556,6 +556,110 @@ the per-mode numbers above. The two bench tracks are
 complementary: `ds4-bench` = engine compute regression;
 `multi_trial_bench.py` = WombatKV warm-restore regression.
 
+## v11 — RFC 0018 envelope discipline (sidecar v4 + block v2 + cabi wire envelope)
+
+alpha.11 lands all 4 actionable phases of RFC 0018 — universal CRC32C
+envelopes across every WombatKV persistence and wire format. The
+discipline is "the same envelope everywhere": magic + version + CRC32C
++ length, single Castagnoli polynomial (0x82F63B78), strict-equal
+version checks at decode (no fallback parsers, pre-launch breaking-
+window applies).
+
+### Phase 1 — ds4 sidecar (raw_tail) envelope v3 → v4
+
+Adds an 8-byte CRC32C + body_len pair to the existing magic + version
+header. Body bytes (per-layer raw rows + compressor state + partial-
+tail comp K/V + END sentinel) are unchanged. Save-side back-patches
+body_len + CRC32C via fseek after writing the body; install-side
+parses the 16-byte envelope, validates magic/version/length/CRC32C
+before decoding any K/V state.
+
+Sidecar size at canonical 1027-token prompt: 23,478,560 bytes (was
+23,478,552 in alpha.10 v3 = +8 bytes for body_len + CRC32C). Save
++ install both use a table-based CRC32C (~500 MB/s scalar) — under
+50 ms on a 22 MB sidecar. Negligible vs the existing S3 PUT/GET
+latency.
+
+### Phase 2 — ds4 block (KVB1) envelope v1 → v2
+
+Repurposes two existing zero-placeholder slots in the v1 block layout
+(the `reserved` u32 in the header + the `crc32` u32 placeholder in
+the trailer) to carry real `body_len` + real CRC32C over body bytes.
+**Wire size unchanged** — pure repurposing.
+
+### Phase 3 — cabi wire envelope (TCP + HTTP)
+
+New `crates/wombatkv-daemon/src/envelope.rs` module: 16-byte universal
+envelope (magic 'WMBT' + version u32 LE + crc32c u32 LE + len u32 LE)
+followed by rkyv-encoded body. Applied to BOTH `tcp_transport` and
+`http_transport`, sync + compio-TPC paths:
+
+- TCP wire: replaces `[u32 BE length][rkyv]` with `[envelope 16][rkyv]`
+- HTTP wire: HTTP body is `[envelope 16][rkyv]`, Content-Length adjusts
+
+10 unit tests on the envelope module (pinned-byte layout, bad
+magic/version/CRC/length rejection, roundtrip cases including empty
+and 1 MB bodies). Both sync server tests and compio-TPC concurrent-
+client (8 clients × 25 requests = 200 ops) keep-alive pipelined (50
+sequential pings) tests pass through the new wire envelope.
+
+### Phase 6 — DST transport-layer chaos surface
+
+3 new fault classes in `wombatkv-dst`: TransportConnectionDropMidRPC,
+TransportPartialReadOnHeader, TransportSlowWrite. Plus buggify
+chaos sites in `tcp_transport::handle_compio_connection_bridge` and
+`http_transport::process_compio_http_route` (gated on `dst` feature
+flag, inert otherwise). dst-sweep extended from 7 to 10 classes.
+
+### Bit-parity preserved across the alpha.10 → alpha.11 jump
+
+The strict regression gate: every WombatKV transport produces
+byte-for-byte identical warm logits to alpha.10's numbers on the
+canonical 1027-token Tier-B fidelity prompt. All envelope additions
+guard against silent corruption without changing K/V byte semantics.
+
+| mode | iter1 (cold) top1 / logit | iter2 (warm) top1 / logit | matches alpha.10? |
+|---|---|---|---|
+| native      | 271 / 25.4305 | 271 / 25.4305 | YES (cold-vs-cold) |
+| native-warm | 271 / 25.4305 | 271 / 24.7634 | YES |
+| embedded    | 271 / 25.4305 | 271 / 24.7634 | YES |
+| daemon-shm  | 271 / 25.4305 | 271 / 24.7634 | YES |
+| daemon-tcp  | 271 / 25.4305 | 271 / 24.7634 | YES |
+| daemon-http | 271 / 25.4305 | 271 / 24.7634 | YES |
+
+See `bench_data/logit_fidelity_alpha11_phase1.json` (Phase 1 only),
+`logit_fidelity_alpha11_phase2.json` (Phase 1 + 2), and the postflight
+sweep capturing all 4 phases active.
+
+### Test counts
+
+| suite | alpha.10 | alpha.11 | delta |
+|---|---:|---:|---|
+| `cargo test --workspace --lib --release` | 216/216 PASS | 226/226 PASS | +10 envelope tests |
+| `cargo test -p wombatkv-cabi --release` | 11/11 PASS | 11/11 PASS | unchanged |
+| `dst-sweep --seeds 1-50` | 350/350 PASS (7 classes) | 500/500 PASS (10 classes) | +3 transport-layer fault classes |
+| `ds4_test --server` | PASS | PASS | unchanged |
+| `ds4_test --metal-kernels` | PASS | PASS | unchanged |
+| `ds4_test --kvblock` | PASS | PASS | unchanged |
+| `ds4_test --tool-call-quality` | PASS | PASS | unchanged |
+
+### Perf
+
+mode_smoke daemon-http with `WMBT_KV_HTTP_TPC_THREADS=2` post-Phase-3
+wire envelope: **6.70× warm-restore speedup** (alpha.10 was 6.92× —
+within Metal scheduling noise envelope; envelope CRC32C cost is
+sub-percent at our payload sizes).
+
+### Alpha breaking-window
+
+This release breaks both sidecar and block wire formats AND the
+daemon TCP/HTTP wire envelope. Buckets containing v3 sidecars or v1
+blocks will not load; daemons + clients must upgrade together (no
+fallback parsers). Per the alpha breaking-window policy: wipe before
+upgrading, no rolling upgrade.
+
+---
+
 ## v10 — HTTP TPC parity with TCP TPC + DST coverage extension
 
 The alpha.9 HTTP landing shipped `serve_http` at "alpha simple"

@@ -60,36 +60,13 @@ def post_logits(prompt: str, top_k: int) -> dict:
         return json.loads(r.read().decode())
 
 
-def trigger_wombatkv_save_via_chat(prompt: str) -> int:
-    """Send a tiny chat completion to force the WombatKV save path
-    (which lives in ds4_server.c's chat completion handler, NOT in
-    ds4_session_sync). Returns elapsed ms.
-
-    Without this, /v1/internal/logits prefills but does NOT save —
-    so iter 2 has nothing to warm-restore from and the "fidelity"
-    test is really just measuring Metal determinism for two cold
-    prefills. The first version of this harness had that bug; the
-    bucket-count check at the end of every iter is the smoking gun
-    (was 0 in the buggy version, should be > 0 with this fix)."""
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "system", "content": "You are a literary assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 4,
-        "temperature": 0.0,
-        "stream": False,
-    }).encode()
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{ms.PORT}/v1/chat/completions",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    t0 = time.time()
-    with urllib.request.urlopen(req, timeout=600) as r:
-        r.read()  # drop response; we only care about side effect
-    return int((time.time() - t0) * 1000)
+# Earlier iterations of this harness called /v1/chat/completions
+# before /v1/internal/logits to trigger the WombatKV save path. That
+# was a dead end — chat-completion calls ds4_session_invalidate() at
+# the end, wiping the warm-restored state before logits sampling.
+# /v1/internal/logits now drives the WombatKV load + save itself
+# (see send_internal_logits in ds4_server.c) so this harness no
+# longer needs the chat-completion preamble.
 
 
 def _start_server_with_debug(mode: str, kvdir: Path, puffer: Path,
@@ -164,26 +141,24 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         for it in range(1, iters + 1):
             ms.log(f"  iter {it}: starting ds4-server (DS4_DEBUG_INTERNAL=1)")
             _start_server_with_debug(mode, kvdir, puffer, serverlog)
-            # First send chat completion to trigger the WombatKV save
-            # path. For WombatKV modes iter 1, this saves blocks to
-            # S3/daemon. For iter 2+, ds4 detects existing blocks and
-            # warm-restores at engine open — chat completion goes fast.
-            chat_ms = trigger_wombatkv_save_via_chat(prompt)
-            ms.log(f"  iter {it}: chat-completion (forces WombatKV save/load) = {chat_ms} ms")
-            # Now sample logits. Session state is whatever the chat completion
-            # left it as (typically prompt + 1 decoded token). The sync inside
-            # the endpoint is a no-op if the session already has the prompt
-            # prefix; top_logprobs returns logits at last position.
-            ms.log(f"  iter {it}: requesting top-K logits at last position")
+            # /v1/internal/logits drives the WombatKV load + save inline,
+            # so iter 1 stores blocks and iter 2+ warm-restores from S3/
+            # daemon. The response field `wombatkv_loaded_tokens` is the
+            # smoking-gun: 0 on iter 1 (nothing saved yet), >0 on warm
+            # iters (proves restore engaged).
+            ms.log(f"  iter {it}: requesting top-K logits (endpoint drives load + sync + save)")
             t0 = time.time()
             resp = post_logits(prompt, top_k)
             elapsed = time.time() - t0
-            ms.log(f"    iter {it}: elapsed={elapsed*1000:.0f} ms, "
-                   f"prompt_tokens={resp.get('prompt_tokens')}, "
-                   f"top1=token_id={resp['top_k'][0]['token_id']} logit={resp['top_k'][0]['logit']:.4f}")
+            ms.log(
+                f"    iter {it}: elapsed={elapsed*1000:.0f} ms, "
+                f"prompt_tokens={resp.get('prompt_tokens')}, "
+                f"sample_position={resp.get('sample_position')}, "
+                f"wombatkv_loaded_tokens={resp.get('wombatkv_loaded_tokens')}, "
+                f"top1=token_id={resp['top_k'][0]['token_id']} logit={resp['top_k'][0]['logit']:.4f}"
+            )
             records.append({
                 "iter": it,
-                "chat_ms": chat_ms,
                 "logits_ms": int(elapsed * 1000),
                 "logits": resp,
             })

@@ -556,6 +556,86 @@ the per-mode numbers above. The two bench tracks are
 complementary: `ds4-bench` = engine compute regression;
 `multi_trial_bench.py` = WombatKV warm-restore regression.
 
+## v10 — HTTP TPC parity with TCP TPC + DST coverage extension
+
+The alpha.9 HTTP landing shipped `serve_http` at "alpha simple"
+std::net + thread-per-conn parity with `serve_tcp` only — the
+compio TPC variant (`serve_tcp_compio_bridge`, the load-bearing
+production fast path under multi-engine load) had no HTTP analog.
+alpha.10 closes that gap.
+
+### serve_http_compio_bridge
+
+Direct mirror of `serve_tcp_compio_bridge`:
+- N OS threads each running its own compio runtime
+- All shards bind same addr with SO_REUSEPORT (kernel-balanced
+  accept on Linux io_uring; weaker semantics on macOS kqueue)
+- Per-connection task ferries decoded WireRequests to the shared
+  `DispatchHandle` worker pool (flume) and awaits the response
+- HTTP/1.1 head parsing in compio: chunked-read accumulator
+  scanning for `\r\n\r\n`, then `Content-Length`-bounded body
+  read. Keep-alive preserved across requests via per-connection
+  buffer + drain.
+
+Env gates (mirror TCP's):
+- `WMBT_KV_HTTP_TPC_THREADS=N` (default 0 = std::net fallback)
+- `WMBT_KV_HTTP_DISPATCH_WORKERS=M` (default 8)
+
+### Correctness validation
+
+4 new unit tests in `wombatkv-daemon::http_transport`:
+- `http_tpc_ping_roundtrip` — basic TPC connectivity
+- `http_tpc_put_then_get_roundtrip` — PUT/GET roundtrip via TPC
+- `http_tpc_concurrent_clients_correctness` — 8 clients × 25
+  requests = **200 concurrent ops, all verified correct** (the
+  value-add test for TPC vs thread-per-conn)
+- `http_tpc_keep_alive_pipelined` — 50 sequential pings on one
+  connection (validates accumulator-buffer drain logic)
+
+End-to-end with ds4: `mode_smoke.py daemon-http` with
+`WMBT_KV_HTTP_TPC_THREADS=2 WMBT_KV_HTTP_DISPATCH_WORKERS=4`:
+**PASS, 6.92× warm-restore speedup** (13.3 s cold → 1.92 s warm),
+10 bucket objects written, clean coherence (lcp=16, shared_words=11).
+
+### DST coverage extension
+
+Existing DST sweep (7 fault classes × seeds) runs through
+`wombatkv-dst-runner` and `scripts/dst-sweep.sh`. Pre-alpha.10
+baseline: 70/70 seeds × classes PASS at 10-seed sweep.
+
+The existing buggify call site in the SHM dispatch loop
+(wombatkv-daemon.rs:893) did NOT cover the TCP TPC or HTTP TPC
+paths — those both ferry through `DispatchHandle` via flume, never
+hitting the SHM consumer. alpha.10 adds a buggify site inside the
+`spawn_dispatch_workers` worker-loop (where the actual dispatch
+closure runs), giving TCP TPC and HTTP TPC the same fault-injection
+coverage as the SHM dispatch path. Single source covers both
+transports (DispatchHandle is shared).
+
+Post-alpha.10 DST runs:
+- `dst-sweep.sh --seeds 1-10`: **70/70 PASS** (regression check)
+- `dst-sweep.sh --seeds 1-50`: **350/350 PASS** in 2 s (chaos
+  exercise)
+- workspace `cargo test --lib --release`: **216/216 PASS** (was
+  212 in alpha.9; +4 = new TPC tests)
+
+### Gap honestly captured
+
+**Transport-layer DST (connection drops, partial socket reads,
+slow clients, TCP RST) is NOT covered** for either TCP TPC or HTTP
+TPC. The DST coverage extends the storage/concurrency/restart
+fault classes that were already there; it does NOT add wire-layer
+fault injection. That's RFC 0018 Phase 6 scope (mirror openpuffer's
+`FaultStorage` seed-driven RNG injection wrapper at the network
+layer).
+
+For alpha.10 the claim is: **same DST coverage as TCP TPC + SHM,
+extended to HTTP TPC by adding one buggify site in the shared
+dispatch worker.** Not "rigorous transport-layer chaos testing" —
+that's queued for the RFC 0018 branch.
+
+---
+
 ## v9 — daemon-http transport landing + 5-user multi-turn validation
 
 Mode 5 (HTTP/1.1 + rkyv) ships alongside the rfc/0018 wire-storage-

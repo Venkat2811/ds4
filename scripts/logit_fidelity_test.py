@@ -60,13 +60,30 @@ def post_logits(prompt: str, top_k: int) -> dict:
         return json.loads(r.read().decode())
 
 
-# Earlier iterations of this harness called /v1/chat/completions
-# before /v1/internal/logits to trigger the WombatKV save path. That
-# was a dead end — chat-completion calls ds4_session_invalidate() at
-# the end, wiping the warm-restored state before logits sampling.
-# /v1/internal/logits now drives the WombatKV load + save itself
-# (see send_internal_logits in ds4_server.c) so this harness no
-# longer needs the chat-completion preamble.
+def _trigger_chat_completion(prompt: str, max_tokens: int = 4) -> int:
+    """Minimal chat-completion call. Used for native-warm mode to
+    engage ds4's KV-disk huge-blob save (which lives in the chat-
+    completion handler, not in /v1/internal/logits). For WombatKV
+    modes the logits endpoint handles its own load+save inline."""
+    payload = json.dumps({
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {"role": "system", "content": "You are a literary assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+        "stream": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{ms.PORT}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=600) as r:
+        r.read()
+    return int((time.time() - t0) * 1000)
 
 
 def _start_server_with_debug(mode: str, kvdir: Path, puffer: Path,
@@ -105,8 +122,22 @@ def _start_server_with_debug(mode: str, kvdir: Path, puffer: Path,
 
 
 def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]:
-    """Run iters of capture under one mode."""
+    """Run iters of capture under one mode.
+
+    Modes:
+      - native: no WombatKV. kvdir wiped between iters → cold prefills.
+      - native-warm: no WombatKV. kvdir KEPT between iters → iter 2+
+        hits ds4's native KV-disk huge-blob warm restore. Right baseline
+        for comparing WombatKV's warm-restore fidelity.
+      - embedded / daemon-shm / daemon-tcp / daemon-tcp-remote: WombatKV
+        modes. kvdir wiped between iters; WombatKV state persists.
+    """
     ms.log(f"=== mode={mode} ({iters} iters) ===")
+    # native-warm uses the same server config as native; differs only
+    # in lifecycle (no kvdir wipe + tiny chat-completion to engage
+    # ds4's huge-blob KV-disk save).
+    server_mode = "native" if mode == "native-warm" else mode
+    keep_kvdir_between_iters = (mode == "native-warm")
     kvdir = Path(f"/tmp/logit-kvdir-{mode}")
     puffer = Path(f"/tmp/logit-puffer-{mode}")
     daemon_puffer = Path(f"/tmp/logit-daemonpuffer-{mode}")
@@ -114,18 +145,18 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
     daemonlog = Path(f"/tmp/logit-{mode}-daemon.log")
 
     ms.kill_all_ds4()
-    if mode in ("daemon-shm", "daemon-tcp"):
+    if server_mode in ("daemon-shm", "daemon-tcp"):
         ms.kill_all_daemon()
     for d in (kvdir, puffer, daemon_puffer):
         if d.exists():
             shutil.rmtree(d)
         d.mkdir()
 
-    if mode == "embedded":
+    if server_mode == "embedded":
         ms.wipe_bucket("wombatkv-smoke-embedded")
-    elif mode == "daemon-shm":
+    elif server_mode == "daemon-shm":
         ms.wipe_bucket("wombatkv-smoke-smoke-shm")
-    elif mode == "daemon-tcp":
+    elif server_mode == "daemon-tcp":
         ms.wipe_bucket("wombatkv-smoke-smoke-tcp")
 
     daemon_proc = None
@@ -140,12 +171,23 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
 
         for it in range(1, iters + 1):
             ms.log(f"  iter {it}: starting ds4-server (DS4_DEBUG_INTERNAL=1)")
-            _start_server_with_debug(mode, kvdir, puffer, serverlog)
+            _start_server_with_debug(server_mode, kvdir, puffer, serverlog)
             # /v1/internal/logits drives the WombatKV load + save inline,
             # so iter 1 stores blocks and iter 2+ warm-restores from S3/
             # daemon. The response field `wombatkv_loaded_tokens` is the
             # smoking-gun: 0 on iter 1 (nothing saved yet), >0 on warm
             # iters (proves restore engaged).
+            #
+            # For native-warm: the chat-completion side-channel below is
+            # what triggers ds4's huge-blob save/restore (logits endpoint
+            # itself doesn't touch the KV-disk cache). So we do a tiny
+            # chat-completion call BEFORE logits for native-warm mode,
+            # so iter-1 saves the huge-blob to kvdir, iter-2 restores it.
+            if mode == "native-warm":
+                # 4-token decode is enough to trigger ds4's KV-disk save
+                # on iter-1; iter-2 will hit the prompt-hash and warm-
+                # restore the entire blob.
+                _trigger_chat_completion(prompt, max_tokens=4)
             ms.log(f"  iter {it}: requesting top-K logits (endpoint drives load + sync + save)")
             t0 = time.time()
             resp = post_logits(prompt, top_k)
@@ -163,7 +205,7 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
                 "logits": resp,
             })
             ms.kill_all_ds4()
-            if kvdir.exists():
+            if not keep_kvdir_between_iters and kvdir.exists():
                 shutil.rmtree(kvdir)
                 kvdir.mkdir()
         # Verify WombatKV actually engaged — bucket should have objects
@@ -304,7 +346,7 @@ def main() -> int:
     p.add_argument(
         "modes",
         nargs="*",
-        default=["native", "embedded", "daemon-shm", "daemon-tcp"],
+        default=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp"],
     )
     p.add_argument("--iters", type=int, default=DEFAULT_ITERS)
     p.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)

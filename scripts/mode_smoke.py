@@ -338,8 +338,24 @@ def send_turn(prompt: str) -> tuple[float, str]:
 
 
 def run_mode(mode: str) -> dict:
-    """Run the 2-turn smoke for `mode`. Returns a result dict."""
+    """Run the 2-turn smoke for `mode`. Returns a result dict.
+
+    Modes:
+      native: no WombatKV. kvdir wiped between turns → 2 cold prefills.
+      native-warm: no WombatKV. kvdir KEPT between turns → turn-2 hits
+        ds4's huge-blob KV-disk warm restore. This is the right
+        baseline for asking "does WombatKV introduce more divergence
+        than ds4's own warm-restore already does?"
+      embedded/daemon-shm/daemon-tcp/daemon-tcp-remote: WombatKV modes.
+        kvdir wiped between turns; WombatKV state persists → turn-2
+        hits WombatKV warm restore.
+    """
     log(f"=== mode: {mode} ===")
+    # native-warm uses the same server config as native; differs only
+    # in NOT wiping kvdir between turns (so ds4's huge-blob save from
+    # turn-1 is available for turn-2 to warm-restore).
+    server_mode = "native" if mode == "native-warm" else mode
+    keep_kvdir_between_turns = (mode == "native-warm")
     kvdir = Path(f"/tmp/mode-smoke-kvdir-{mode}")
     puffer = Path(f"/tmp/mode-smoke-puffer-{mode}")
     daemon_puffer = Path(f"/tmp/mode-smoke-daemonpuffer-{mode}")
@@ -347,7 +363,7 @@ def run_mode(mode: str) -> dict:
     daemonlog = Path(f"/tmp/mode-smoke-{mode}-daemon.log")
 
     kill_all_ds4()
-    if mode in ("daemon-shm", "daemon-tcp"):
+    if server_mode in ("daemon-shm", "daemon-tcp"):
         kill_all_daemon()
 
     # Wipe BOTH the ds4-side caches and the daemon-side foyer/SlateDB
@@ -374,30 +390,32 @@ def run_mode(mode: str) -> dict:
 
     daemon_proc = None
     try:
-        if mode == "daemon-shm":
+        if server_mode == "daemon-shm":
             log("  starting wombatkv-daemon (SHM prefix=smoke-shm)")
             daemon_proc = start_daemon("shm", "smoke-shm", daemonlog, daemon_puffer)
-        elif mode == "daemon-tcp":
+        elif server_mode == "daemon-tcp":
             log(f"  starting wombatkv-daemon (TCP 127.0.0.1:{TCP_PORT})")
             daemon_proc = start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
-        elif mode == "daemon-tcp-remote":
+        elif server_mode == "daemon-tcp-remote":
             log(f"  remote daemon expected at {REMOTE_TCP_ADDR} — no local start")
 
         log("  starting ds4-server")
-        start_server(mode, kvdir, puffer, serverlog)
+        start_server(server_mode, kvdir, puffer, serverlog)
 
         log("  turn 1 (cold prefill)")
         t1, text1 = send_turn(PROMPT_TEXT)
         log(f"    turn-1 elapsed = {t1*1000:.0f} ms, first 40 chars: {text1[:40]!r}")
 
-        # Kill server, wipe kvdir only (puffer/daemon survives for warm-restore parity)
+        # native-warm keeps kvdir so turn-2 hits ds4's huge-blob warm
+        # restore. All other modes wipe kvdir (WombatKV state persists
+        # for the WombatKV modes via puffer + S3 + daemon).
         kill_all_ds4()
-        if kvdir.exists():
+        if not keep_kvdir_between_turns and kvdir.exists():
             shutil.rmtree(kvdir)
             kvdir.mkdir()
 
         log("  restarting ds4-server")
-        start_server(mode, kvdir, puffer, serverlog)
+        start_server(server_mode, kvdir, puffer, serverlog)
 
         log("  turn 2 (warm restore for wombatkv modes)")
         t2, text2 = send_turn(PROMPT_TEXT)
@@ -405,11 +423,11 @@ def run_mode(mode: str) -> dict:
 
         # Bucket signal
         bucket = None
-        if mode == "embedded":
-            bucket = f"wombatkv-smoke-{mode}"
-        elif mode == "daemon-shm":
+        if server_mode == "embedded":
+            bucket = f"wombatkv-smoke-{server_mode}"
+        elif server_mode == "daemon-shm":
             bucket = "wombatkv-smoke-smoke-shm"
-        elif mode == "daemon-tcp":
+        elif server_mode == "daemon-tcp":
             bucket = "wombatkv-smoke-smoke-tcp"
         bucket_keys: list[str] = []
         if bucket:
@@ -449,8 +467,8 @@ def run_mode(mode: str) -> dict:
         if not text1.strip() or not text2.strip():
             verdict = "FAIL"
             notes.append("empty response")
-        if mode != "native":
-            if not bucket_keys and mode != "daemon-tcp-remote":
+        if server_mode != "native":
+            if not bucket_keys and server_mode != "daemon-tcp-remote":
                 notes.append("bucket empty (WombatKV did not write any blocks)")
                 # don't fail on this alone — short prompt may not trigger block write
             if t2 > t1 * 0.9:
@@ -481,7 +499,7 @@ def run_mode(mode: str) -> dict:
                 daemon_proc.wait(timeout=5)
             except Exception:
                 daemon_proc.kill()
-        if mode in ("daemon-shm", "daemon-tcp"):
+        if server_mode in ("daemon-shm", "daemon-tcp"):
             kill_all_daemon()
         # daemon-tcp-remote: remote daemon is the user's responsibility
 
@@ -491,7 +509,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
         "mode",
-        choices=["native", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "all"],
+        choices=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "all"],
     )
     p.add_argument(
         "--remote-tcp",
@@ -516,7 +534,7 @@ def main() -> int:
             return 1
         REMOTE_TCP_ADDR = args.remote_tcp
 
-    modes = ["native", "embedded", "daemon-shm", "daemon-tcp"] if args.mode == "all" else [args.mode]
+    modes = ["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp"] if args.mode == "all" else [args.mode]
     results = []
     for m in modes:
         try:

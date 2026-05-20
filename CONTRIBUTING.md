@@ -246,6 +246,27 @@ on-disk format (sidecar / block) or wire envelope, run
 Cross-machine TCP (mode-4 cross-host) and HTTP (mode-5 cross-host)
 have remote-daemon variants — see docs/MODE_VALIDATION.md.
 
+### Test hooks (env-gated, off in production)
+
+`DS4_TEST_FORCE_WMBT_TAIL_FAIL=1` — forces the parallel-tail-fetch
+path in `wmbt_kv_try_load_blocks` to skip `pthread_create` and fall
+through to the serial-fetch fallback (ds4_server.c:9595-9648). Used
+to exercise the rare "pthread_create failed" branch without process
+RLIMIT manipulation. Integration smoke recipe:
+
+```sh
+# 1. populate WombatKV state (any normal warm-restore run)
+python3 scripts/mode_smoke.py daemon-shm   # produces blocks in S3
+
+# 2. re-run with the hook to verify the fallback path completes
+#    cleanly without borrow leak or hang
+DS4_TEST_FORCE_WMBT_TAIL_FAIL=1 \
+  python3 scripts/mode_smoke.py daemon-shm
+```
+
+Production code path is unchanged when the env var is unset — the
+hook is a single `getenv()` check at one site.
+
 ### Known testing gaps
 
 See RFC 0018 §13 (in

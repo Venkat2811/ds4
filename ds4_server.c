@@ -56,7 +56,25 @@ static char *g_wmbt_kv_fingerprint = NULL;
  * This is the cross-prompt prefix-sharing path and the only production
  * load/store path. When replace_local is also configured, the block path
  * runs first and short-circuits; replace_local stays armed as the v1/
- * text-prefix fallback. RFC 0007 §6. */
+ * text-prefix fallback. RFC 0007 §6.
+ *
+ * CONCURRENCY (alpha.13-polish, ds4 audit fix #94):
+ * g_wmbt_kv_block_tokens is written exactly once at server startup by
+ * wmbt_kv_init_hooks() BEFORE any request thread starts, and read by
+ * every wmbt_kv_try_load_blocks / wmbt_kv_save_blocks call. It is NOT
+ * mutex-guarded. Today this is safe because:
+ *   (a) The write happens in main() before HTTP serve loop accepts
+ *       connections (init runs strictly before any worker thread).
+ *   (b) ds4-server's architecture serializes all Metal-bound work
+ *       through the single Metal worker thread. Reads on the block
+ *       path always come from that single worker, so no two readers
+ *       race against a writer.
+ *
+ * If either invariant changes (runtime "POST /admin/set-block-tokens"
+ * endpoint, multi-worker Metal scheduler), this MUST move under a
+ * mutex / atomic_int. block_tokens participates in BLAKE3 content
+ * hashing of every block; reads observing different values would
+ * silently miss block-prefix lookups (different hash domain). */
 static int g_wmbt_kv_block_tokens = 128;
 #endif
 
@@ -9585,9 +9603,23 @@ static int wmbt_kv_try_load_blocks(server *s,
         .rc_st = 0,
     };
     tail_arg.st_err[0] = '\0';
-    int tail_spawned =
-        (pthread_create(&tail_thread, NULL,
-                        ds4_parallel_tail_fetch, &tail_arg) == 0);
+    /* TEST HOOK (alpha.13-polish, audit fix #95): when
+     * DS4_TEST_FORCE_WMBT_TAIL_FAIL is set, skip pthread_create entirely
+     * and force the fallback serial-fetch path. This lets ds4_test
+     * exercise the rare-but-real "pthread_create failed; fall back to
+     * serial fetch" branch (line 9723 below) without manipulating
+     * process RLIMITs. The hook is a single getenv() check on a path
+     * already gated by g_wmbt_kv_handle != NULL — overhead is one
+     * function call when env unset (typical), and the production path
+     * is preserved exactly. */
+    int tail_spawned;
+    if (getenv("DS4_TEST_FORCE_WMBT_TAIL_FAIL")) {
+        tail_spawned = 0;
+    } else {
+        tail_spawned =
+            (pthread_create(&tail_thread, NULL,
+                            ds4_parallel_tail_fetch, &tail_arg) == 0);
+    }
 
     /* (3) get_kv_blocks_borrowed for the matched prefix. */
     const uint8_t **payload_ptrs = NULL;

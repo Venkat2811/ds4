@@ -18,6 +18,16 @@ LDLIBS ?= -lm -pthread
 # At runtime, set DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
 # to activate. Without either gate the build/runtime is a strict no-op
 # vs the vanilla path.
+#
+# Runtime dylib search: we DO NOT bake the build-time WOMBATKV_LIB path
+# into the binary (that was a deployment landmine — moving the dylib
+# at deploy time crashed ds4-server with "dyld: Library not loaded").
+# Instead we use:
+#   - macOS: @loader_path/../lib (preferred) AND $(WOMBATKV_LIB) as fallback
+#   - Linux: $ORIGIN/../lib (preferred) AND $(WOMBATKV_LIB) as fallback
+# Deployment layout: ship libwombatkv.dylib in <ds4-server-dir>/../lib
+# OR set DYLD_LIBRARY_PATH / LD_LIBRARY_PATH to the dylib's real
+# location.
 WOMBATKV ?= 0
 WOMBATKV_DIR ?=
 ifeq ($(WOMBATKV),1)
@@ -27,7 +37,14 @@ endif
 WOMBATKV_INC := $(WOMBATKV_DIR)/crates/wombatkv-cabi/include
 WOMBATKV_LIB := $(WOMBATKV_DIR)/target/release
 CFLAGS  += -DDS4_WOMBATKV -I$(WOMBATKV_INC)
-LDLIBS  += -L$(WOMBATKV_LIB) -lwombatkv -Wl,-rpath,$(WOMBATKV_LIB)
+ifeq ($(UNAME_S),Darwin)
+# macOS: dual rpath — first @loader_path/../lib for deployment, then
+# the build-time path for in-tree dev (cargo build + immediate run).
+LDLIBS  += -L$(WOMBATKV_LIB) -lwombatkv -Wl,-rpath,@loader_path/../lib -Wl,-rpath,$(WOMBATKV_LIB)
+else
+# Linux: $ORIGIN/../lib equivalent. Escape $ to survive Make expansion.
+LDLIBS  += -L$(WOMBATKV_LIB) -lwombatkv -Wl,-rpath,'$$ORIGIN/../lib' -Wl,-rpath,$(WOMBATKV_LIB)
+endif
 endif
 METAL_SRCS := $(wildcard metal/*.metal)
 

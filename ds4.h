@@ -198,7 +198,7 @@ int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, 
 void ds4_session_snapshot_free(ds4_session_snapshot *snap);
 
 /* ============================================================================
- * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ * Token-aligned KV blocks (RFC 0007 — KVBlock/0.1)
  * ----------------------------------------------------------------------------
  * Slice the session's KV state by token range. Used by WombatKV to store
  * content-addressed token-aligned blocks on object storage, enabling
@@ -224,17 +224,15 @@ void ds4_session_snapshot_free(ds4_session_snapshot *snap);
  *
  * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
  * implementation lands incrementally with associated tests. Callers
- * should defer hard production reliance on them until Tier B is marked
- * stable in the WombatKV CHANGELOG.
+ * should defer hard production reliance on them until the
+ * block-prefix path is marked stable in the WombatKV CHANGELOG.
  *
- * Server-side env-var precedence (consumed by ds4_server, not the libds4 API):
- *   WMBT_KV_TIER_B=1            opt in to the block-chain load/store path.
- *   WMBT_KV_BOOTSTRAP_WORLD=1   re-index S3 manifests at handle init so
- *                               Tier B can engage on the FIRST request
- *                               after a process restart.
- *   WMBT_KV_TIER_B=1 implicitly enables WMBT_KV_BOOTSTRAP_WORLD=1 unless
- *   the user has set it explicitly (e.g. =0 to opt out of the implicit
- *   bootstrap when they know the in-process index is already warm).
+ * Server-side env vars (consumed by ds4_server, not the libds4 API):
+ *   WMBT_KV_BLOCK_TOKENS=<N>    block granularity (default 128; must
+ *                               be a positive multiple of 128).
+ * The world-knowledge bootstrap that lets the block-prefix engage on
+ * the FIRST request after a restart is unconditional in the
+ * WombatKV substrate — no env-gate.
  * ============================================================================ */
 
 /* One block in a load batch. token_end is exclusive. */
@@ -275,7 +273,7 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
                            char *err, size_t errlen);
 
 /* RFC 0007 §10.P5 raw-tail sidecar — save the session's SWA-window raw
- * KV to a memory FILE* as a standalone sidecar payload. The block chain
+ * KV to a memory FILE* as a standalone sidecar payload. The block prefix
  * is independent — this is meant to be uploaded under
  * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` by the caller (typically
  * ds4_server) right after a successful wmbt_kv_put_kv_blocks() call.
@@ -295,12 +293,26 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  *
  * Returns 0 on success; -1 on error with err populated.
  */
+/* `prompt_tokens_count` is the prompt length to record in the envelope's
+ * `original_total_tokens` field. Callers that save after generation has
+ * extended the live checkpoint past the prompt MUST pass the prompt
+ * length here; otherwise the install path on restore would extend the
+ * checkpoint past the next request's prompt and `ds4_session_sync` would
+ * fall through to a full re-prefill. Pass 0 to use `s->checkpoint.len`
+ * (the legacy behaviour, only correct when save runs at end of prefill). */
+/* `block_tokens` is the WombatKV/kvblock save granularity. The save
+ * needs it to compute how much compressor K/V the blocks already
+ * captured vs how much remains for the partial-tail extension in the
+ * sidecar (positions in [last_block_end, prompt_tokens_count)).
+ * Pass the same value used by `ds4_session_save_block`. */
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              uint32_t prompt_tokens_count,
+                              uint32_t block_tokens,
                               char *err, size_t errlen);
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the
  * session's SWA ring from a sidecar payload (the inverse of
- * ds4_session_save_raw_tail). Used by ds4_server after a Tier B
+ * ds4_session_save_raw_tail). Used by ds4_server after a block-prefix
  * load_blocks() succeeded, when the matching sidecar GET also hit.
  *
  * After successful install, the session's CPU/Metal raw KV cache holds

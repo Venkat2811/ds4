@@ -135,6 +135,148 @@ To generate a graph for a CSV:
 python3 speed-bench/plot_speed.py /tmp/ds4-speed.csv --title "Machine t/s"
 ```
 
+## WombatKV integration tests
+
+WombatKV testing is **both** extensions of the existing ds4_test
+suite **and** new harnesses we added on top of the upstream ds4
+correctness framework. Run the relevant ones for any change that
+touches: the WombatKV C ABI, sidecar / block on-disk format, save/load
+hooks in `ds4_server.c`, or block-prefix kvblocks code in `ds4.c`.
+
+### Extended `ds4_test` subtests (upstream framework, our additions)
+
+The `ds4_test --kvblock` subtest registered in `tests/ds4_test.c`'s
+`test_kvblock_group` is the upstream-shape extension. We added:
+
+| function | what |
+|---|---|
+| `test_kvblock_validation` | block_tokens range validation (upstream-shape, pre-existing) |
+| `test_crc32c_known_vector` | CRC32C polynomial sanity (alpha.11+; see RFC 0018 §13 C4) |
+| `test_kvblock_cpu_roundtrip` | block save/load_blocks round-trip (upstream-shape) |
+| `test_kvblock_raw_tail_sidecar_roundtrip` | sidecar save + magic check (alpha.7+) |
+| `test_kvblock_raw_tail_v4_corruption_rejected` | RFC 0018 Phase 1 — v4 sidecar envelope rejects bad CRC / bad version / bad magic / truncation (alpha.11+) |
+| `test_kvblock_block_v2_corruption_rejected` | RFC 0018 Phase 2 — v2 block envelope rejects bad CRC / bad version (alpha.11+) |
+
+Run them with: `./ds4_test --kvblock` (after `make ds4_test
+WOMBATKV=1 WOMBATKV_DIR=<path>`). The corruption rejection tests are
+the "this CRC actually catches things" proof — without them we'd have
+CRC computation but no proof it gates.
+
+### New harnesses (no upstream analog)
+
+Five Python harnesses cover the ds4 × WombatKV substrate × five
+transports (native, embedded, daemon-shm, daemon-tcp, daemon-http):
+
+Pre-req for non-native modes: native MinIO on `127.0.0.1:9200` +
+`libwombatkv.dylib` and `wombatkv-daemon` built in tensorpuffer (see
+docs/MODE_VALIDATION.md for the env setup).
+
+```sh
+# Quick same-host smoke across all transports (~10-15 min):
+python3 scripts/mode_smoke.py all
+
+# Per-mode (~2 min/mode):
+python3 scripts/mode_smoke.py daemon-http
+python3 scripts/mode_smoke.py daemon-tcp
+# ...
+
+# Output coherence under repeated cold/warm cycles (~5-8 min/mode):
+python3 scripts/coherence_test.py
+python3 scripts/coherence_test.py daemon-http --iters 5
+
+# Tensor-level logit fidelity (THE bit-parity proof; ~8-12 min):
+DS4_DEBUG_INTERNAL=1 python3 scripts/logit_fidelity_test.py
+
+# Multi-user multi-turn (5 distinct users × 3 turns each × all 5
+# transports; ~10-15 min):
+python3 scripts/scenarios/multi_user_multiturn.py --mode all \
+    --output /tmp/multi-user-results.json
+
+# Cross-session restore stress (kills+restarts ds4-server between
+# users — exercises the load-from-S3 path explicitly):
+python3 scripts/scenarios/multi_user_multiturn.py --mode all \
+    --restart-between-users
+```
+
+### tensorpuffer-side test runs (Rust)
+
+Tier-A byte-roundtrip + envelope corruption rejection + transport-
+layer negative-path + DST schedule determinism (fast, sandbox-safe):
+
+```sh
+cd <tensorpuffer>
+# All lib tests across the workspace (~50s, currently 236 tests at
+# alpha.11+1: 226 from alpha.11 + 10 envelope-corruption tests):
+cargo test --workspace --lib --release
+
+# DST schedule sweep (~3s for 500 plans = 50 seeds × 10 fault classes
+# including the 3 alpha.11 transport-layer classes):
+./scripts/dst-sweep.sh --seeds 1-50
+
+# Larger sweep before tagging (10,000 plans, ~30s):
+./scripts/dst-sweep.sh --seeds 1-1000
+```
+
+The 10 envelope-corruption tests (5 per HTTP + 5 per TCP transport)
+are the proof that bad magic / wrong version / CRC mismatch / oversize
+/ truncation all produce clean rejection (drop connection or 4xx)
+without panic. See RFC 0018 §13 for the full audit.
+
+What each harness proves:
+
+| harness | level | proves |
+|---|---|---|
+| `mode_smoke.py` | text | server boots cleanly per mode, ≥1 block written to S3, turn-2 warm latency < turn-1 cold, response non-empty |
+| `coherence_test.py` | text | N repeated cold/warm cycles produce reasonable English (no garbage); pairwise LCP / shared-words within native noise floor |
+| `logit_fidelity_test.py` | tensor (logits) | L∞ logit drift cold-vs-warm matches ds4's huge-blob native-warm baseline (≤ 0.05), `wombatkv_loaded_tokens` confirms restore engaged, top-1 token preserved |
+| `multi_user_multiturn.py` | text + concurrency | 5 distinct users with separate histories all produce coherent output; cross-user contamination check; intra-user turn-(2..N) warm-restore wins |
+| `cargo test --lib` (tensorpuffer) | bytes + wire | Tier-A adversarial-payload byte roundtrip + envelope encode/decode + transport-layer corruption rejection (TCP + HTTP) |
+| `dst-sweep.sh` (tensorpuffer) | DST | 50 seeds × 10 fault classes → 500 deterministic fault plans, all generate cleanly |
+| `ds4_test --kvblock` | C-side bytes | sidecar v4 + block v2 round-trip AND corruption rejection (alpha.11+ adds CRC32C gating tests) |
+
+If you only have time for one, `mode_smoke.py all` is the right
+broad spot-check. If your change touches the K/V tensor layout
+(layer counts, head dim, compressor ratios), also run
+`logit_fidelity_test.py` — it's the test that caught the v5/v7 →
+v8 partial-tail / compressor-state gap. If your change touches an
+on-disk format (sidecar / block) or wire envelope, run
+`ds4_test --kvblock` for the C-side corruption-rejection proof and
+`cargo test --workspace --lib` for the Rust-side envelope proof.
+
+Cross-machine TCP (mode-4 cross-host) and HTTP (mode-5 cross-host)
+have remote-daemon variants — see docs/MODE_VALIDATION.md.
+
+### Test hooks (env-gated, off in production)
+
+`DS4_TEST_FORCE_WMBT_TAIL_FAIL=1` — forces the parallel-tail-fetch
+path in `wmbt_kv_try_load_blocks` to skip `pthread_create` and fall
+through to the serial-fetch fallback (ds4_server.c:9595-9648). Used
+to exercise the rare "pthread_create failed" branch without process
+RLIMIT manipulation. Integration smoke recipe:
+
+```sh
+# 1. populate WombatKV state (any normal warm-restore run)
+python3 scripts/mode_smoke.py daemon-shm   # produces blocks in S3
+
+# 2. re-run with the hook to verify the fallback path completes
+#    cleanly without borrow leak or hang
+DS4_TEST_FORCE_WMBT_TAIL_FAIL=1 \
+  python3 scripts/mode_smoke.py daemon-shm
+```
+
+Production code path is unchanged when the env var is unset — the
+hook is a single `getenv()` check at one site.
+
+### Known testing gaps
+
+See RFC 0018 §13 (in
+`myelon-launch/ai-chat-exports/.0_agentic_engineering/5_tensor_puffer/
+0_rfcs/0018_wire_storage_versioning_transactional_discipline.md`) for
+the honest gap audit: CPU↔GPU byte-equality tests for sidecar/block,
+DST Stage 3.5 live-runner harness, OS-level fault injection, and
+cross-host post-envelope re-validation are all queued but not yet
+closed.
+
 ## Reporting sessions bugs
 
 For debugging a failing generation, keep the trace:

@@ -1,0 +1,24 @@
+
+=== native mode (2 trials) ===
+    warmup=704 ms (Metal JIT primed)
+  trial 1/2: turn1=8888 ms (cold), turn2=7909 ms (after restart)
+    warmup=727 ms (Metal JIT primed)
+  trial 2/2: turn1=8484 ms (cold), turn2=8242 ms (after restart)
+
+=== wombatkv mode (2 trials) ===
+    warmup=1844 ms (Metal JIT primed)
+  trial 1/2: turn1=13548 ms (cold), turn2=5597 ms (after restart)
+    warmup=787 ms (Metal JIT primed)
+  trial 2/2: turn1=5131 ms (cold), turn2=4179 ms (after restart)
+
+===== RESULTS =====
+
+native:
+  turn1 cold:    median=8686 ms  min=8484  max=8888  n=2
+  turn2 restart: median=8075 ms  min=7909  max=8242  n=2
+
+wombatkv:
+  turn1 cold:    median=9339 ms  min=5131  max=13548  n=2
+  turn2 restart: median=4888 ms  min=4179  max=5597  n=2
+
+  CELL B SPEEDUP (median turn-2 native / median turn-2 wombatkv): 1.7x

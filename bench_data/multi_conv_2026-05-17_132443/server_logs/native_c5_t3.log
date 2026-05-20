@@ -1,0 +1,22 @@
+ds4: Metal device Apple M3 Max, 96.00 GiB RAM
+ds4: Metal model views created in 2.426 ms, residency requested in 1518.323 ms, warmup 5.207 ms (mapped 82697.67 MiB from offset 5.08 MiB)
+ds4: Metal mapped mmaped model as 2 overlapping shared buffers
+ds4: metal backend initialized for graph diagnostics
+0517 14:12:49 ds4-server: context buffers 751.71 MiB (ctx=32768, backend=metal, prefill_chunk=2048, raw_kv_rows=2304, compressed_kv_rows=8194)
+0517 14:12:49 ds4-server: KV disk cache /tmp/multiconv-ds4-native (budget=16384 MiB, cross-quant=accept, min=256, cold_max=30000, continued=10000, trim=32, align=2048)
+0517 14:12:49 ds4-server: listening on http://127.0.0.1:8000
+0517 14:12:50 ds4-server: chat ctx=0..11933:11933 prompt start
+0517 14:12:50 ds4-server: chat ctx=0..11933:11933 prefill chunk 0/11933 (0.0%) chunk=0.00 t/s avg=0.00 t/s 0.008s
+0517 14:13:00 ds4-server: chat ctx=0..11933:11933 prefill chunk 2048/11933 (17.2%) chunk=213.74 t/s avg=213.57 t/s 9.589s
+0517 14:13:12 ds4-server: chat ctx=0..11933:11933 prefill chunk 4096/11933 (34.3%) chunk=159.12 t/s avg=182.36 t/s 22.461s
+0517 14:13:26 ds4-server: chat ctx=0..11933:11933 prefill chunk 6144/11933 (51.5%) chunk=156.70 t/s avg=172.92 t/s 35.530s
+0517 14:13:56 ds4-server: chat ctx=0..11933:11933 prefill chunk 8192/11933 (68.6%) chunk=67.23 t/s avg=124.14 t/s 65.991s
+0517 14:14:23 ds4-server: chat ctx=0..11933:11933 prefill chunk 10240/11933 (85.8%) chunk=74.82 t/s avg=109.68 t/s 93.365s
+0517 14:14:24 ds4-server: kv cache stored tokens=10240 trimmed=0 reason=continued key=token-text size=157.33 MiB save=184.7 ms
+0517 14:14:54 ds4-server: chat ctx=0..11933:11933 prefill chunk 11933/11933 (100.0%) chunk=54.84 t/s avg=96.05 t/s 124.236s
+0517 14:14:54 ds4-server: chat ctx=0..11933:11933 prompt done 124.240s
+0517 14:15:15 ds4-server: chat ctx=11933..11983:50 gen=50 THINKING decoding chunk=2.45 t/s avg=2.45 t/s 20.446s
+0517 14:15:15 ds4-server: chat ctx=0..11933:11933 gen=50 THINKING finish=length 144.692s
+0517 14:15:15 ds4-server: shutdown requested, draining requests
+0517 14:15:15 ds4-server: persisting current KV cache before shutdown tokens=11983
+0517 14:15:15 ds4-server: kv cache stored tokens=11983 trimmed=0 reason=shutdown key=token-text size=180.15 MiB save=164.8 ms

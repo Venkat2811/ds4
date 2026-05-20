@@ -1,0 +1,303 @@
+ds4: Metal device Apple M3 Max, 96.00 GiB RAM
+ds4: Metal model views created in 2.295 ms, residency requested in 1691.732 ms, warmup 8.214 ms (mapped 82697.67 MiB from offset 5.08 MiB)
+ds4: Metal mapped mmaped model as 2 overlapping shared buffers
+ds4: metal backend initialized for graph diagnostics
+0517 14:20:31 ds4-server: context buffers 751.71 MiB (ctx=32768, backend=metal, prefill_chunk=2048, raw_kv_rows=2304, compressed_kv_rows=8194)
+0517 14:20:31 ds4-server: KV disk cache /tmp/multiconv-ds4-wombatkv (budget=16384 MiB, cross-quant=accept, min=256, cold_max=30000, continued=10000, trim=32, align=2048)
+0517 14:20:31 ds4-server: listening on http://127.0.0.1:8000
+ds4-server: DS4_WMBT_KV_FINGERPRINT24 unset; derived aa519a6cd609dd6d3bf2e5fe from sha1(gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf)
+WombatKV 0.1.0-alpha: validated on macOS M3/M4 + native MinIO. Linux io_uring + cloud-S3 are beta milestones.
+wombatkv[compress]: block-storage compression enabled (algo=Zstd, level=3)
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"bootstrap_from_slatedb","stages":{"total_ms":1,"blocks_loaded":0}}
+wombatkv[bootstrap]: hydrated 0 blocks from SlateDB at "/tmp/multiconv-puffer-wombatkv/slatedb" for node_id="default-node" namespace="ds4-metal"
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"bootstrap_world_knowledge","stages":{"total_ms":8,"manifests_read":0,"chunk_keys_seen":0,"tier_b_block_keys":0,"blocks_indexed":0,"namespace":"ds4-metal"}}
+wombatkv[bootstrap]: indexed 0 chunk-blocks from S3 prefix for namespace="ds4-metal"
+wombatkv[prefetch]: starting block prefetch worker (interval_ms=30000, top_k=8, namespace="ds4-metal", dry_run=false)
+ds4-server: WombatKV hooks enabled namespace=ds4-metal fingerprint=aa519a6cd609dd6d3bf2e5fe tier_b=1 block_tokens=128
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"prefetch_cycle_v2","stages":{"scored":0,"selected":0,"skipped_already_flat":0,"fetched":0,"failed":0,"bytes_materialized":0,"elapsed_ms":0}}
+[MyelonInstr] {"scope":"ds4_kvblocks_load","result":"miss","chain_len":93,"lookup_ms":0.02,"chain_ms":0.20}
+[MyelonInstr] {"scope":"ds4_kv_try_load_text","path":"tier_b","stages":{"entry_to_exit_ms":4.72,"tokenize_ms":4.47},"loaded_tokens":0}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"foyer_get_with_tier","path":"miss","stages":{"ram_miss_us":183,"ssd_miss_us":687,"total_us":870}}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"WombatKVKvStore.get_kv","path":"miss","stages":{"total_us":110321}}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"wmbt_kv_get_kv_borrowed","path":"miss","stages":{"parse_us":0,"total_us":110517}}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"foyer_get_with_tier","path":"miss","stages":{"ram_miss_us":1,"ssd_miss_us":22,"total_us":23}}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"WombatKVKvStore.get_kv","path":"miss","stages":{"total_us":110873}}
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"wmbt_kv_get_kv_borrowed","path":"miss","stages":{"parse_us":0,"total_us":110908}}
+0517 14:20:32 ds4-server: chat ctx=0..11907:11907 prompt start
+0517 14:20:32 ds4-server: chat ctx=0..11907:11907 prefill chunk 0/11907 (0.0%) chunk=0.00 t/s avg=0.00 t/s 0.022s
+0517 14:20:42 ds4-server: chat ctx=0..11907:11907 prefill chunk 2048/11907 (17.2%) chunk=208.10 t/s avg=207.62 t/s 9.864s
+0517 14:20:54 ds4-server: chat ctx=0..11907:11907 prefill chunk 4096/11907 (34.4%) chunk=169.68 t/s avg=186.74 t/s 21.934s
+0517 14:21:07 ds4-server: chat ctx=0..11907:11907 prefill chunk 6144/11907 (51.6%) chunk=160.40 t/s avg=177.05 t/s 34.702s
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"prefetch_cycle_v2","stages":{"scored":0,"selected":0,"skipped_already_flat":0,"fetched":0,"failed":0,"bytes_materialized":0,"elapsed_ms":4}}
+0517 14:21:44 ds4-server: chat ctx=0..11907:11907 prefill chunk 8192/11907 (68.8%) chunk=54.49 t/s avg=113.33 t/s 72.285s
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"prefetch_cycle_v2","stages":{"scored":0,"selected":0,"skipped_already_flat":0,"fetched":0,"failed":0,"bytes_materialized":0,"elapsed_ms":0}}
+0517 14:22:10 ds4-server: chat ctx=0..11907:11907 prefill chunk 10240/11907 (86.0%) chunk=80.10 t/s avg=104.65 t/s 97.853s
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":42830,"uncompressed_bytes":1761728,"compressed_bytes":901073,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":83706,"uncompressed_bytes":1761728,"compressed_bytes":901092,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":87295,"uncompressed_bytes":1761728,"compressed_bytes":901848,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":87887,"uncompressed_bytes":1761728,"compressed_bytes":901706,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":86778,"uncompressed_bytes":1761728,"compressed_bytes":901297,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":87891,"uncompressed_bytes":1761728,"compressed_bytes":900775,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":45841,"uncompressed_bytes":1761728,"compressed_bytes":901365,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":84649,"uncompressed_bytes":1761728,"compressed_bytes":901424,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":88688,"uncompressed_bytes":1761728,"compressed_bytes":901311,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":50586,"uncompressed_bytes":1761728,"compressed_bytes":900638,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":51171,"uncompressed_bytes":1761728,"compressed_bytes":902647,"ratio_bps":5123}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":91671,"uncompressed_bytes":1761728,"compressed_bytes":901298,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":91030,"uncompressed_bytes":1761728,"compressed_bytes":901586,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":55918,"uncompressed_bytes":1761728,"compressed_bytes":902087,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":56208,"uncompressed_bytes":1761728,"compressed_bytes":901142,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":58045,"uncompressed_bytes":1761728,"compressed_bytes":901542,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":58037,"uncompressed_bytes":1761728,"compressed_bytes":900803,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":60760,"uncompressed_bytes":1761728,"compressed_bytes":900884,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":60964,"uncompressed_bytes":1761728,"compressed_bytes":901328,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":62862,"uncompressed_bytes":1761728,"compressed_bytes":902365,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":93340,"uncompressed_bytes":1761728,"compressed_bytes":901493,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":65438,"uncompressed_bytes":1761728,"compressed_bytes":901352,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":66125,"uncompressed_bytes":1761728,"compressed_bytes":901665,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":66315,"uncompressed_bytes":1761728,"compressed_bytes":901286,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":63097,"uncompressed_bytes":1761728,"compressed_bytes":901276,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":65329,"uncompressed_bytes":1761728,"compressed_bytes":901186,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":63825,"uncompressed_bytes":1761728,"compressed_bytes":901518,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":90829,"uncompressed_bytes":1761728,"compressed_bytes":900911,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":67607,"uncompressed_bytes":1761728,"compressed_bytes":901635,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":95516,"uncompressed_bytes":1761728,"compressed_bytes":900295,"ratio_bps":5110}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":97250,"uncompressed_bytes":1761728,"compressed_bytes":901119,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":96802,"uncompressed_bytes":1761728,"compressed_bytes":901932,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":67981,"uncompressed_bytes":1761728,"compressed_bytes":901287,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":98525,"uncompressed_bytes":1761728,"compressed_bytes":901166,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":68648,"uncompressed_bytes":1761728,"compressed_bytes":901036,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":68398,"uncompressed_bytes":1761728,"compressed_bytes":900724,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":72187,"uncompressed_bytes":1761728,"compressed_bytes":901667,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":69727,"uncompressed_bytes":1761728,"compressed_bytes":901364,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":65438,"uncompressed_bytes":1761728,"compressed_bytes":900867,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":101942,"uncompressed_bytes":1761728,"compressed_bytes":901776,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":72932,"uncompressed_bytes":1761728,"compressed_bytes":901104,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":76701,"uncompressed_bytes":1761728,"compressed_bytes":901285,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":73524,"uncompressed_bytes":1761728,"compressed_bytes":900639,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":74371,"uncompressed_bytes":1761728,"compressed_bytes":901506,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":74682,"uncompressed_bytes":1761728,"compressed_bytes":901265,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":104429,"uncompressed_bytes":1761728,"compressed_bytes":901779,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":75016,"uncompressed_bytes":1761728,"compressed_bytes":901263,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":75508,"uncompressed_bytes":1761728,"compressed_bytes":901384,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":76353,"uncompressed_bytes":1761728,"compressed_bytes":901473,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":77104,"uncompressed_bytes":1761728,"compressed_bytes":901691,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":76536,"uncompressed_bytes":1761728,"compressed_bytes":901174,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":76811,"uncompressed_bytes":1761728,"compressed_bytes":900826,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":79591,"uncompressed_bytes":1761728,"compressed_bytes":900695,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":76261,"uncompressed_bytes":1761728,"compressed_bytes":900892,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":79691,"uncompressed_bytes":1761728,"compressed_bytes":901490,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":81209,"uncompressed_bytes":1761728,"compressed_bytes":901705,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":119041,"uncompressed_bytes":1761728,"compressed_bytes":901261,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":81370,"uncompressed_bytes":1761728,"compressed_bytes":901383,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":83252,"uncompressed_bytes":1761728,"compressed_bytes":902408,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":83782,"uncompressed_bytes":1761728,"compressed_bytes":901271,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":80513,"uncompressed_bytes":1761728,"compressed_bytes":901331,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":53871,"uncompressed_bytes":1761728,"compressed_bytes":901109,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":89717,"uncompressed_bytes":1761728,"compressed_bytes":901229,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":51112,"uncompressed_bytes":1761728,"compressed_bytes":901184,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":84661,"uncompressed_bytes":1761728,"compressed_bytes":901421,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":86036,"uncompressed_bytes":1761728,"compressed_bytes":901112,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":52230,"uncompressed_bytes":1761728,"compressed_bytes":902041,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":86366,"uncompressed_bytes":1761728,"compressed_bytes":901018,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":86661,"uncompressed_bytes":1761728,"compressed_bytes":901400,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":89154,"uncompressed_bytes":1761728,"compressed_bytes":901797,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":52893,"uncompressed_bytes":1761728,"compressed_bytes":901624,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":52117,"uncompressed_bytes":1761728,"compressed_bytes":901894,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":55743,"uncompressed_bytes":1761728,"compressed_bytes":901572,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":55503,"uncompressed_bytes":1761728,"compressed_bytes":901823,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":91639,"uncompressed_bytes":1761728,"compressed_bytes":901303,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":56080,"uncompressed_bytes":1761728,"compressed_bytes":901826,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":57950,"uncompressed_bytes":1761728,"compressed_bytes":900740,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":64995,"uncompressed_bytes":1761728,"compressed_bytes":901892,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":80944,"uncompressed_bytes":1761728,"compressed_bytes":900664,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":136463,"uncompressed_bytes":1761728,"compressed_bytes":901864,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"ds4_kvblocks_save","result":"ok","reason":"continued","n_blocks":80,"block_tokens":128,"bytes":140938240,"sidecar_put":1,"sidecar_bytes":11272224,"stages":{"chain_ms":0.20,"save_blocks_ms":145.88,"put_ms":467.12,"sidecar_ms":11.15,"entry_to_exit_ms":626.34}}
+ds4-server: WombatKV store reason=continued text_bytes=34256 size=164973456 key=wombatkv/ds4/v2/model=aa519a6cd609dd6d3bf2e5fe/bytes=0000034256/sha1=2d526c44f784639ec7b8e03f5152c4c5a1f94305-q2
+0517 14:22:10 ds4-server: WombatKV replace store tokens=10240 trimmed=0 reason=continued save=105.3 ms
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":6795,"uncompressed_bytes":1761728,"compressed_bytes":900867,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":10300,"uncompressed_bytes":1761728,"compressed_bytes":901864,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":10356,"uncompressed_bytes":1761728,"compressed_bytes":900724,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":10536,"uncompressed_bytes":1761728,"compressed_bytes":900295,"ratio_bps":5110}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":9228,"uncompressed_bytes":1761728,"compressed_bytes":901797,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":9735,"uncompressed_bytes":1761728,"compressed_bytes":902087,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":9665,"uncompressed_bytes":1761728,"compressed_bytes":901706,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":11823,"uncompressed_bytes":1761728,"compressed_bytes":901285,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":15199,"uncompressed_bytes":1761728,"compressed_bytes":901894,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":11058,"uncompressed_bytes":1761728,"compressed_bytes":901383,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":9654,"uncompressed_bytes":1761728,"compressed_bytes":901186,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":15443,"uncompressed_bytes":1761728,"compressed_bytes":901303,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":5826,"uncompressed_bytes":1761728,"compressed_bytes":901932,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":16762,"uncompressed_bytes":1761728,"compressed_bytes":902408,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":19926,"uncompressed_bytes":1761728,"compressed_bytes":902647,"ratio_bps":5123}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":17299,"uncompressed_bytes":1761728,"compressed_bytes":901263,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":18007,"uncompressed_bytes":1761728,"compressed_bytes":901572,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":14692,"uncompressed_bytes":1761728,"compressed_bytes":901261,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":24584,"uncompressed_bytes":1761728,"compressed_bytes":901586,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":5727,"uncompressed_bytes":1761728,"compressed_bytes":900892,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":5768,"uncompressed_bytes":1761728,"compressed_bytes":901635,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":29951,"uncompressed_bytes":1761728,"compressed_bytes":901823,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":30710,"uncompressed_bytes":1761728,"compressed_bytes":901779,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":28123,"uncompressed_bytes":1761728,"compressed_bytes":901691,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":27093,"uncompressed_bytes":1761728,"compressed_bytes":901424,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":20348,"uncompressed_bytes":1761728,"compressed_bytes":901705,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":7919,"uncompressed_bytes":1761728,"compressed_bytes":901506,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":17806,"uncompressed_bytes":1761728,"compressed_bytes":901276,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":19940,"uncompressed_bytes":1761728,"compressed_bytes":901331,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":27541,"uncompressed_bytes":1761728,"compressed_bytes":900775,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":21692,"uncompressed_bytes":1761728,"compressed_bytes":901018,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":18950,"uncompressed_bytes":1761728,"compressed_bytes":901328,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31511,"uncompressed_bytes":1761728,"compressed_bytes":901297,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":40379,"uncompressed_bytes":1761728,"compressed_bytes":901036,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36314,"uncompressed_bytes":1761728,"compressed_bytes":901400,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":42429,"uncompressed_bytes":1761728,"compressed_bytes":901286,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":42682,"uncompressed_bytes":1761728,"compressed_bytes":901174,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":19738,"uncompressed_bytes":1761728,"compressed_bytes":901265,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":43644,"uncompressed_bytes":1761728,"compressed_bytes":902041,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":40252,"uncompressed_bytes":1761728,"compressed_bytes":901493,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":29432,"uncompressed_bytes":1761728,"compressed_bytes":901365,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":45346,"uncompressed_bytes":1761728,"compressed_bytes":901473,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31559,"uncompressed_bytes":1761728,"compressed_bytes":900740,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":38983,"uncompressed_bytes":1761728,"compressed_bytes":901287,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31601,"uncompressed_bytes":1761728,"compressed_bytes":901892,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":23567,"uncompressed_bytes":1761728,"compressed_bytes":901311,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":49548,"uncompressed_bytes":1761728,"compressed_bytes":901826,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":50164,"uncompressed_bytes":1761728,"compressed_bytes":900803,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":33200,"uncompressed_bytes":1761728,"compressed_bytes":901665,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":52220,"uncompressed_bytes":1761728,"compressed_bytes":900884,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":30051,"uncompressed_bytes":1761728,"compressed_bytes":901421,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36899,"uncompressed_bytes":1761728,"compressed_bytes":901364,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":30251,"uncompressed_bytes":1761728,"compressed_bytes":900638,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":39648,"uncompressed_bytes":1761728,"compressed_bytes":901667,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36695,"uncompressed_bytes":1761728,"compressed_bytes":901624,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31637,"uncompressed_bytes":1761728,"compressed_bytes":901142,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":49615,"uncompressed_bytes":1761728,"compressed_bytes":901184,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":38862,"uncompressed_bytes":1761728,"compressed_bytes":901109,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":5779,"uncompressed_bytes":1761728,"compressed_bytes":901271,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":41299,"uncompressed_bytes":1761728,"compressed_bytes":901119,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":62683,"uncompressed_bytes":1761728,"compressed_bytes":901490,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":40837,"uncompressed_bytes":1761728,"compressed_bytes":901518,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":34189,"uncompressed_bytes":1761728,"compressed_bytes":901104,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":32930,"uncompressed_bytes":1761728,"compressed_bytes":900911,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":39455,"uncompressed_bytes":1761728,"compressed_bytes":901092,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":26887,"uncompressed_bytes":1761728,"compressed_bytes":901229,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":33047,"uncompressed_bytes":1761728,"compressed_bytes":901166,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":8765,"uncompressed_bytes":1761728,"compressed_bytes":901776,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":10815,"uncompressed_bytes":1761728,"compressed_bytes":901848,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":46680,"uncompressed_bytes":1761728,"compressed_bytes":901352,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":20251,"uncompressed_bytes":1761728,"compressed_bytes":901073,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":8162,"uncompressed_bytes":1761728,"compressed_bytes":901112,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":16623,"uncompressed_bytes":1761728,"compressed_bytes":901298,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":25551,"uncompressed_bytes":1761728,"compressed_bytes":901542,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":23262,"uncompressed_bytes":1761728,"compressed_bytes":902365,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":5734,"uncompressed_bytes":1761728,"compressed_bytes":901384,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":22724,"uncompressed_bytes":1761728,"compressed_bytes":900826,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31530,"uncompressed_bytes":1761728,"compressed_bytes":900639,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":25433,"uncompressed_bytes":1761728,"compressed_bytes":900695,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":40580,"uncompressed_bytes":1761728,"compressed_bytes":900664,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"ds4_kvblocks_save","result":"ok","reason":"cold","n_blocks":80,"block_tokens":128,"bytes":140938240,"sidecar_put":1,"sidecar_bytes":11272224,"stages":{"chain_ms":0.19,"save_blocks_ms":26.46,"put_ms":214.96,"sidecar_ms":8.22,"entry_to_exit_ms":255.75}}
+ds4-server: WombatKV store reason=cold text_bytes=34256 size=164973456 key=wombatkv/ds4/v2/model=aa519a6cd609dd6d3bf2e5fe/bytes=0000034256/sha1=2d526c44f784639ec7b8e03f5152c4c5a1f94305-q2
+0517 14:22:11 ds4-server: WombatKV replace store tokens=10240 trimmed=1667 reason=cold save=297.8 ms
+[MyelonInstr] {"scope":"wmbt_kv_timing","fn":"prefetch_cycle_v2","stages":{"scored":80,"selected":8,"skipped_already_flat":8,"fetched":0,"failed":0,"bytes_materialized":0,"elapsed_ms":2}}
+0517 14:22:42 ds4-server: chat ctx=0..11907:11907 prefill chunk 11907/11907 (100.0%) chunk=51.32 t/s avg=91.36 t/s 130.333s
+0517 14:22:42 ds4-server: chat ctx=0..11907:11907 prompt done 130.336s
+0517 14:22:55 ds4-server: chat ctx=11907..11957:50 gen=50 THINKING decoding chunk=3.90 t/s avg=3.90 t/s 12.821s
+0517 14:22:55 ds4-server: chat ctx=0..11907:11907 gen=50 THINKING finish=length 143.159s
+0517 14:22:55 ds4-server: shutdown requested, draining requests
+0517 14:22:55 ds4-server: persisting current KV cache before shutdown tokens=11957
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":28209,"uncompressed_bytes":1761728,"compressed_bytes":901328,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":34179,"uncompressed_bytes":1761728,"compressed_bytes":901490,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":28619,"uncompressed_bytes":1761728,"compressed_bytes":901186,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":34644,"uncompressed_bytes":1761728,"compressed_bytes":901864,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36767,"uncompressed_bytes":1761728,"compressed_bytes":901826,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":28765,"uncompressed_bytes":1761728,"compressed_bytes":901665,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":35991,"uncompressed_bytes":1761728,"compressed_bytes":901286,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36307,"uncompressed_bytes":1761728,"compressed_bytes":901932,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":36605,"uncompressed_bytes":1761728,"compressed_bytes":900803,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":28830,"uncompressed_bytes":1761728,"compressed_bytes":901364,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":38515,"uncompressed_bytes":1761728,"compressed_bytes":901691,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":31634,"uncompressed_bytes":1761728,"compressed_bytes":901376,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":32072,"uncompressed_bytes":1761728,"compressed_bytes":901706,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":42539,"uncompressed_bytes":1761728,"compressed_bytes":901112,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":41379,"uncompressed_bytes":1761728,"compressed_bytes":901352,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":29930,"uncompressed_bytes":1761728,"compressed_bytes":901184,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":41565,"uncompressed_bytes":1761728,"compressed_bytes":901384,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":39806,"uncompressed_bytes":1761728,"compressed_bytes":901142,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":39945,"uncompressed_bytes":1761728,"compressed_bytes":901572,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":44631,"uncompressed_bytes":1761728,"compressed_bytes":900724,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":50543,"uncompressed_bytes":1761728,"compressed_bytes":901522,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":50073,"uncompressed_bytes":1761728,"compressed_bytes":901166,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":50266,"uncompressed_bytes":1761728,"compressed_bytes":901104,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":56801,"uncompressed_bytes":1761728,"compressed_bytes":901311,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":56891,"uncompressed_bytes":1761728,"compressed_bytes":901287,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":57075,"uncompressed_bytes":1761728,"compressed_bytes":901586,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":57885,"uncompressed_bytes":1761728,"compressed_bytes":901667,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":66024,"uncompressed_bytes":1761728,"compressed_bytes":900775,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":67975,"uncompressed_bytes":1761728,"compressed_bytes":901892,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":72730,"uncompressed_bytes":1761728,"compressed_bytes":901797,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":75202,"uncompressed_bytes":1761728,"compressed_bytes":901506,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":104914,"uncompressed_bytes":1761728,"compressed_bytes":901018,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":105678,"uncompressed_bytes":1761728,"compressed_bytes":901357,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":114920,"uncompressed_bytes":1761728,"compressed_bytes":901542,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":115977,"uncompressed_bytes":1761728,"compressed_bytes":901130,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":119213,"uncompressed_bytes":1761728,"compressed_bytes":900826,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":120183,"uncompressed_bytes":1761728,"compressed_bytes":901624,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":117709,"uncompressed_bytes":1761728,"compressed_bytes":900892,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":123094,"uncompressed_bytes":1761728,"compressed_bytes":901119,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":123175,"uncompressed_bytes":1761728,"compressed_bytes":901265,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":123316,"uncompressed_bytes":1761728,"compressed_bytes":901285,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":123795,"uncompressed_bytes":1761728,"compressed_bytes":901635,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":120697,"uncompressed_bytes":1761728,"compressed_bytes":902365,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":124781,"uncompressed_bytes":1761728,"compressed_bytes":901894,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":125262,"uncompressed_bytes":1761728,"compressed_bytes":901092,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":125482,"uncompressed_bytes":1761728,"compressed_bytes":901424,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":126406,"uncompressed_bytes":1761728,"compressed_bytes":901779,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":127175,"uncompressed_bytes":1761728,"compressed_bytes":901823,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":132167,"uncompressed_bytes":1761728,"compressed_bytes":901388,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":132781,"uncompressed_bytes":1761728,"compressed_bytes":901036,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":134890,"uncompressed_bytes":1761728,"compressed_bytes":901174,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":135157,"uncompressed_bytes":1761728,"compressed_bytes":901518,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":135187,"uncompressed_bytes":1761728,"compressed_bytes":901819,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":136911,"uncompressed_bytes":1761728,"compressed_bytes":902087,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":135772,"uncompressed_bytes":1761728,"compressed_bytes":901331,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":137927,"uncompressed_bytes":1761728,"compressed_bytes":900638,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":138455,"uncompressed_bytes":1761728,"compressed_bytes":900987,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":138768,"uncompressed_bytes":1761728,"compressed_bytes":902647,"ratio_bps":5123}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":140395,"uncompressed_bytes":1761728,"compressed_bytes":900639,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141717,"uncompressed_bytes":1761728,"compressed_bytes":901276,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141872,"uncompressed_bytes":1761728,"compressed_bytes":901365,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":140086,"uncompressed_bytes":1761728,"compressed_bytes":901109,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141450,"uncompressed_bytes":1761728,"compressed_bytes":901421,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":143574,"uncompressed_bytes":1761728,"compressed_bytes":901298,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":143987,"uncompressed_bytes":1761728,"compressed_bytes":900853,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":144986,"uncompressed_bytes":1761728,"compressed_bytes":900295,"ratio_bps":5110}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":140427,"uncompressed_bytes":1761728,"compressed_bytes":900695,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":145443,"uncompressed_bytes":1761728,"compressed_bytes":901303,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":146386,"uncompressed_bytes":1761728,"compressed_bytes":901073,"ratio_bps":5114}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":146926,"uncompressed_bytes":1761728,"compressed_bytes":900520,"ratio_bps":5111}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":146649,"uncompressed_bytes":1761728,"compressed_bytes":901473,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":146206,"uncompressed_bytes":1761728,"compressed_bytes":901297,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":7217,"uncompressed_bytes":1761728,"compressed_bytes":901271,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":149636,"uncompressed_bytes":1761728,"compressed_bytes":901493,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":150350,"uncompressed_bytes":1761728,"compressed_bytes":901263,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":151376,"uncompressed_bytes":1761728,"compressed_bytes":901705,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":152669,"uncompressed_bytes":1761728,"compressed_bytes":901383,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":154775,"uncompressed_bytes":1761728,"compressed_bytes":900845,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":155117,"uncompressed_bytes":1761728,"compressed_bytes":901261,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":154438,"uncompressed_bytes":1761728,"compressed_bytes":901848,"ratio_bps":5119}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141008,"uncompressed_bytes":1761728,"compressed_bytes":901420,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141198,"uncompressed_bytes":1761728,"compressed_bytes":901216,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":141345,"uncompressed_bytes":1761728,"compressed_bytes":902041,"ratio_bps":5120}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":7165,"uncompressed_bytes":1761728,"compressed_bytes":901514,"ratio_bps":5117}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":157971,"uncompressed_bytes":1761728,"compressed_bytes":900867,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":166118,"uncompressed_bytes":1761728,"compressed_bytes":900740,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":166308,"uncompressed_bytes":1761728,"compressed_bytes":900884,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":165319,"uncompressed_bytes":1761728,"compressed_bytes":901229,"ratio_bps":5115}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":38177,"uncompressed_bytes":1761728,"compressed_bytes":901400,"ratio_bps":5116}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":182225,"uncompressed_bytes":1761728,"compressed_bytes":901776,"ratio_bps":5118}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":187950,"uncompressed_bytes":1761728,"compressed_bytes":900664,"ratio_bps":5112}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":194408,"uncompressed_bytes":1761728,"compressed_bytes":900911,"ratio_bps":5113}}
+[MyelonInstr] {"scope":"wmbt_kv_compress","fn":"put_kv","algo":"zstd","level":3,"stages":{"compress_us":194696,"uncompressed_bytes":1761728,"compressed_bytes":902408,"ratio_bps":5122}}
+[MyelonInstr] {"scope":"ds4_kvblocks_save","result":"ok","reason":"shutdown","n_blocks":93,"block_tokens":128,"bytes":163840704,"sidecar_put":0,"sidecar_bytes":0,"stages":{"chain_ms":0.21,"save_blocks_ms":101.74,"put_ms":609.76,"sidecar_ms":0.00,"entry_to_exit_ms":714.88}}
+ds4-server: WombatKV store reason=shutdown text_bytes=40394 size=188581982 key=wombatkv/ds4/v2/model=aa519a6cd609dd6d3bf2e5fe/bytes=0000040394/sha1=276ea925a1a3dfe866437986b7b7b63b0b514c68-q2
+0517 14:22:56 ds4-server: WombatKV replace store tokens=11957 trimmed=0 reason=shutdown save=113.2 ms

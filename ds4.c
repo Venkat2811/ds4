@@ -15817,6 +15817,68 @@ static DS4_MAYBE_UNUSED int payload_write_u32(FILE *fp, uint32_t v, char *err, s
     return payload_write_bytes(fp, b, sizeof(b), err, errlen);
 }
 
+/* ---- CRC32C (Castagnoli) for RFC 0018 Phase 1/2 envelopes ----
+ *
+ * Standard CRC-32C (polynomial 0x82F63B78, reflected). Table-based
+ * scalar implementation, ~500 MB/s on M3 Max. Used by the v4
+ * raw_tail sidecar envelope and (when shipped) the v2 KVB1 block
+ * envelope to guard against silent corruption between save and
+ * install.
+ *
+ * Init has a benign data race in multi-threaded use (all threads
+ * compute identical table values into the same memory). That's
+ * fine: ds4's KV save runs single-threaded after the chat-completion
+ * response, and any concurrent reader on the install side would
+ * see a partially-initialized table only on the very first call,
+ * at which point ds4_crc32c_table_init is still 0 so we re-init
+ * deterministically.
+ */
+static uint32_t ds4_crc32c_table_[256];
+static int ds4_crc32c_table_initialized_ = 0;
+
+static void ds4_crc32c_init_table_(void) {
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (int k = 0; k < 8; k++) {
+            c = (c & 1u) ? (0x82F63B78u ^ (c >> 1)) : (c >> 1);
+        }
+        ds4_crc32c_table_[i] = c;
+    }
+    ds4_crc32c_table_initialized_ = 1;
+}
+
+static inline uint32_t ds4_crc32c_init_state(void) { return 0xffffffffu; }
+
+static inline uint32_t ds4_crc32c_update(uint32_t state, const uint8_t *bytes, size_t n) {
+    if (!ds4_crc32c_table_initialized_) ds4_crc32c_init_table_();
+    for (size_t i = 0; i < n; i++) {
+        state = ds4_crc32c_table_[(state ^ bytes[i]) & 0xffu] ^ (state >> 8);
+    }
+    return state;
+}
+
+static inline uint32_t ds4_crc32c_finalize(uint32_t state) { return state ^ 0xffffffffu; }
+
+/* CRC32C-tracking variants of payload_write_*. Same byte order
+ * (little-endian u32), same error contract. Used by save-side
+ * envelope writers that need to fold every body byte into a CRC
+ * for back-patching. */
+static DS4_MAYBE_UNUSED int payload_write_bytes_crc(FILE *fp, uint32_t *crc,
+                                                    const void *ptr, uint64_t bytes,
+                                                    char *err, size_t errlen) {
+    if (payload_write_bytes(fp, ptr, bytes, err, errlen) != 0) return 1;
+    *crc = ds4_crc32c_update(*crc, (const uint8_t *)ptr,
+                             (size_t)(bytes > (uint64_t)SIZE_MAX ? SIZE_MAX : bytes));
+    return 0;
+}
+
+static DS4_MAYBE_UNUSED int payload_write_u32_crc(FILE *fp, uint32_t *crc, uint32_t v,
+                                                  char *err, size_t errlen) {
+    uint8_t b[4];
+    payload_put_u32(b, v);
+    return payload_write_bytes_crc(fp, crc, b, sizeof(b), err, errlen);
+}
+
 static DS4_MAYBE_UNUSED int payload_read_u32(FILE *fp, uint32_t *v, uint64_t *remaining, char *err, size_t errlen) {
     uint8_t b[4];
     if (remaining && *remaining < sizeof(b)) {
@@ -15903,6 +15965,54 @@ static int payload_write_tensor_span(FILE *fp, const ds4_gpu_tensor *tensor,
     return 0;
 }
 
+/* CRC32C-tracking variants of payload_read_*. Same byte-for-byte input
+ * from fp, with each chunk folded into *crc as it's read. Used by
+ * load-side envelope readers that need to validate a trailer CRC over
+ * body bytes streamed through the existing parsers (RFC 0018 Phase 2). */
+static DS4_MAYBE_UNUSED int payload_read_bytes_crc(FILE *fp, uint32_t *crc,
+                                                   void *ptr, uint64_t bytes,
+                                                   uint64_t *remaining,
+                                                   char *err, size_t errlen) {
+    if (payload_read_bytes(fp, ptr, bytes, remaining, err, errlen) != 0) return 1;
+    *crc = ds4_crc32c_update(*crc, (const uint8_t *)ptr,
+                             (size_t)(bytes > (uint64_t)SIZE_MAX ? SIZE_MAX : bytes));
+    return 0;
+}
+
+static DS4_MAYBE_UNUSED int payload_read_u32_crc(FILE *fp, uint32_t *crc, uint32_t *v,
+                                                 uint64_t *remaining,
+                                                 char *err, size_t errlen) {
+    uint8_t b[4];
+    if (payload_read_bytes_crc(fp, crc, b, sizeof(b), remaining, err, errlen) != 0) return 1;
+    *v = payload_get_u32(b);
+    return 0;
+}
+
+/* CRC32C-tracking variant of payload_write_tensor_span. Same byte-for-byte
+ * output to fp, with each chunk folded into *crc as it's written. */
+static DS4_MAYBE_UNUSED int payload_write_tensor_span_crc(FILE *fp, uint32_t *crc,
+                                          const ds4_gpu_tensor *tensor,
+                                          uint64_t offset, uint64_t bytes,
+                                          uint8_t *buf, size_t cap,
+                                          char *err, size_t errlen) {
+    if (!tensor || offset > ds4_gpu_tensor_bytes(tensor) ||
+        bytes > ds4_gpu_tensor_bytes(tensor) - offset) {
+        payload_set_err(err, errlen, "session tensor is smaller than the payload");
+        return 1;
+    }
+    uint64_t done = 0;
+    while (done < bytes) {
+        const size_t n = bytes - done > (uint64_t)cap ? cap : (size_t)(bytes - done);
+        if (ds4_gpu_tensor_read(tensor, offset + done, buf, n) == 0) {
+            payload_set_err(err, errlen, "failed to read Metal session tensor");
+            return 1;
+        }
+        if (payload_write_bytes_crc(fp, crc, buf, n, err, errlen) != 0) return 1;
+        done += n;
+    }
+    return 0;
+}
+
 static int payload_read_tensor_span(FILE *fp, ds4_gpu_tensor *tensor,
                                     uint64_t offset, uint64_t bytes,
                                     uint8_t *buf, size_t cap, uint64_t *remaining,
@@ -15917,6 +16027,34 @@ static int payload_read_tensor_span(FILE *fp, ds4_gpu_tensor *tensor,
     while (done < bytes) {
         const size_t n = bytes - done > (uint64_t)cap ? cap : (size_t)(bytes - done);
         if (payload_read_bytes(fp, buf, n, remaining, err, errlen) != 0) return 1;
+        if (ds4_gpu_tensor_write(tensor, offset + done, buf, n) == 0) {
+            payload_set_err(err, errlen, "failed to restore Metal session tensor");
+            return 1;
+        }
+        done += n;
+    }
+    return 0;
+}
+
+/* CRC32C-tracking variant of payload_read_tensor_span. Same byte-for-byte
+ * input from fp, with each chunk folded into *crc as it's read AND
+ * written to the Metal tensor. */
+static DS4_MAYBE_UNUSED int payload_read_tensor_span_crc(FILE *fp, uint32_t *crc,
+                                                ds4_gpu_tensor *tensor,
+                                                uint64_t offset, uint64_t bytes,
+                                                uint8_t *buf, size_t cap,
+                                                uint64_t *remaining,
+                                                char *err, size_t errlen) {
+    if (!tensor || offset > ds4_gpu_tensor_bytes(tensor) ||
+        bytes > ds4_gpu_tensor_bytes(tensor) - offset)
+    {
+        payload_set_err(err, errlen, "session tensor is smaller than the payload");
+        return 1;
+    }
+    uint64_t done = 0;
+    while (done < bytes) {
+        const size_t n = bytes - done > (uint64_t)cap ? cap : (size_t)(bytes - done);
+        if (payload_read_bytes_crc(fp, crc, buf, n, remaining, err, errlen) != 0) return 1;
         if (ds4_gpu_tensor_write(tensor, offset + done, buf, n) == 0) {
             payload_set_err(err, errlen, "failed to restore Metal session tensor");
             return 1;
@@ -16656,7 +16794,7 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
 }
 
 /* ============================================================================
- * Token-aligned KV blocks (RFC 0007 Tier B — KVBlock/0.1)
+ * Token-aligned KV blocks (RFC 0007 — KVBlock/0.1)
  *
  * Public API declared in ds4.h. The CPU save path is implemented; load /
  * Metal paths remain skeletons. The wire format is documented inline at
@@ -16674,11 +16812,13 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  * Layout:
  *   header (24 B):
  *     u32 magic = 0x3142564B  ("KVB1" little-endian)
- *     u32 version = 1
+ *     u32 version = 2                   (v2: real body_len + real CRC32C)
  *     u32 block_seq          (sequence in the chain; informational)
  *     u32 token_count        (= token_end - token_start, multiple of 128)
  *     u32 n_layers           (must equal DS4_N_LAYER)
- *     u32 reserved           (zero for now)
+ *     u32 body_len           (RFC 0018 Phase 2; bytes of per-layer body
+ *                              between this header and the CRC trailer.
+ *                              In v1 this slot was a zero `reserved`.)
  *   per-layer body (for il = 0..n_layers-1):
  *     u32 ratio              (0 / 4 / 128)
  *     if ratio != 0:
@@ -16688,16 +16828,24 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  *       u32 index_rows       (= token_count / 4)
  *       index_rows × DS4_N_INDEXER_HEAD_DIM × sizeof(float) bytes
  *   trailer (4 B):
- *     u32 crc32              (over body bytes after header; zero for v1)
+ *     u32 body_crc32c        (RFC 0018 Phase 2; Castagnoli polynomial
+ *                              0x82F63B78 over the body bytes — same
+ *                              CRC32C used by the v4 sidecar envelope.
+ *                              In v1 this slot was a zero placeholder.)
+ *
+ * Alpha breaking-window: v1 blocks in S3 do NOT load under v2 readers.
+ * Buckets must be wiped when upgrading. The byte size of a block is
+ * unchanged (the v2 change is purely repurposing two existing 4-byte
+ * placeholder slots — reserved and crc32 — to carry real values).
  */
 #define DS4_KVBLOCK_MAGIC    0x3142564Bu   /* 'K','V','B','1' little-endian */
-#define DS4_KVBLOCK_VERSION  1u
+#define DS4_KVBLOCK_VERSION  2u
 #define DS4_KVBLOCK_HEADER_BYTES   24u
 #define DS4_KVBLOCK_TRAILER_BYTES  4u
 
 /* RFC 0007 §10.P5 raw-tail sidecar wire format (independent object stored
  * under `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hex>` by ds4_server). The
- * block chain payload (KVB1) is unchanged.
+ * block prefix payload (KVB1) is unchanged.
  *
  * Raw-tail wire layout:
  *   u32 magic            = DS4_KVBLOCK_RAW_TAIL_MAGIC ('RTT1')
@@ -16718,14 +16866,49 @@ int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, c
  * Producers call ds4_session_save_raw_tail(s, fp, ...) to write the
  * envelope to a memory FILE*; ds4_server then PUTs the bytes via
  * wmbt_kv_put_raw_tail keyed by chain-tip hash. Consumers call
- * ds4_session_install_raw_tail(s, bytes, len, ...) after a Tier B
+ * ds4_session_install_raw_tail(s, bytes, len, ...) after a block-prefix
  * load_blocks succeeded; on success n_raw is populated and the next
  * session_sync() can short-circuit the SWA-window re-prefill.
  */
 #define DS4_KVBLOCK_RAW_TAIL_MAGIC        0x52545431u   /* 'R','T','T','1' little-endian */
 #define DS4_KVBLOCK_RAW_TAIL_END          0x52545445u   /* 'R','T','T','E' little-endian */
-#define DS4_KVBLOCK_RAW_TAIL_VERSION      1u
-#define DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES 24u
+/* v4 envelope (RFC 0018 Phase 1): the per-format header gains the
+ * universal 16-byte envelope prefix from RFC 0018:
+ *
+ *   bytes[0..4]  : DS4_KVBLOCK_RAW_TAIL_MAGIC ('RTT1', LE u32)
+ *   bytes[4..8]  : DS4_KVBLOCK_RAW_TAIL_VERSION (4, LE u32)
+ *   bytes[8..12] : body_len  (LE u32) — bytes of body after this header,
+ *                  inclusive of the END sentinel.
+ *   bytes[12..16]: body_crc32c (LE u32) — CRC32C (Castagnoli, polynomial
+ *                  0x82F63B78 reflected) over bytes[16..16+body_len].
+ *
+ * Body layout (after the 16-byte envelope) is the same v3 schema:
+ *   u32 n_layers, u32 n_raw_rows, u32 head_dim, u32 bytes_per_elem,
+ *   u32 original_total_tokens, then raw_kv rows + per-layer compressor
+ *   state + partial-tail comp K/V, terminated by u32 END_MAGIC.
+ *
+ * Why CRC + len in the envelope:
+ *   - len gives the receiver an explicit bound for the body without
+ *     having to scan to the END sentinel first;
+ *   - CRC catches silent corruption between save and install (S3
+ *     bit-flip, transport truncation, filesystem fault) before we
+ *     restore K/V state that would silently poison the model.
+ *
+ * Alpha breaking-window: v3 envelopes in S3 will NOT load under v4
+ * readers (no fallback parser). Wipe sidecar buckets when upgrading.
+ *
+ * History: v1 was the original raw-only envelope; v2 added
+ * original_total_tokens; v3 added per-layer compressor state +
+ * partial-tail comp K/V (closed the kvblocks-vs-huge-blob logit
+ * drift, see MODE_VALIDATION.md "v8 — bit-parity"); v4 wraps the
+ * v3 body in the RFC 0018 universal envelope (CRC + len).
+ */
+#define DS4_KVBLOCK_RAW_TAIL_VERSION         4u
+#define DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES  16u
+/* Body prelude (after envelope): n_layers + n_raw_rows + head_dim
+ * + bytes_per_elem + original_total_tokens = 5 × u32 = 20 bytes,
+ * before the per-layer raw rows + compressor state. */
+#define DS4_KVBLOCK_RAW_TAIL_BODY_PRELUDE_BYTES  20u
 
 /* Internal: validate block_tokens.
  *
@@ -16809,13 +16992,23 @@ static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
     const uint32_t block_tokens = (uint32_t)(token_end - token_start);
     const uint32_t block_seq    = (uint32_t)token_start / block_tokens;
 
-    /* Header. */
+    /* Header. body_len in the old `reserved` slot is back-patched
+     * after the body is written; the trailer CRC32C is written at
+     * the end. */
+    long header_offset = ftell(fp);
+    if (header_offset < 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_cpu: ftell header failed");
+        return -1;
+    }
     if (payload_write_u32(fp, DS4_KVBLOCK_MAGIC,   err, errlen) != 0) return -1;
     if (payload_write_u32(fp, DS4_KVBLOCK_VERSION, err, errlen) != 0) return -1;
     if (payload_write_u32(fp, block_seq,           err, errlen) != 0) return -1;
     if (payload_write_u32(fp, block_tokens,        err, errlen) != 0) return -1;
     if (payload_write_u32(fp, DS4_N_LAYER,         err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, 0u /*reserved*/,     err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u /*body_len placeholder*/, err, errlen) != 0) return -1;
+
+    long body_start = ftell(fp);
+    uint32_t crc = ds4_crc32c_init_state();
 
     /* Per-layer body. Mirror save_payload's per-layer loop scoped to
      * [token_start, token_end). For ratio=0 layers we emit only the
@@ -16823,13 +17016,9 @@ static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
     for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
         const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
         const uint32_t ratio = layer->compress_ratio;
-        if (payload_write_u32(fp, ratio, err, errlen) != 0) return -1;
+        if (payload_write_u32_crc(fp, &crc, ratio, err, errlen) != 0) return -1;
         if (ratio == 0) continue;
 
-        /* Compressed K/V slice. Compressed rows are append-only from
-         * row zero; row index = token_index / ratio. block_tokens is a
-         * multiple of 128 ⇒ multiple of every ratio in use, so both
-         * comp_row_start and comp_row_count are exact integers. */
         const uint32_t comp_row_start = (uint32_t)token_start / ratio;
         const uint32_t comp_row_count = block_tokens / ratio;
         const uint32_t comp_row_end   = comp_row_start + comp_row_count;
@@ -16842,16 +17031,14 @@ static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
             payload_set_err(err, errlen, msg);
             return -1;
         }
-        if (payload_write_u32(fp, comp_row_count, err, errlen) != 0) return -1;
-        if (payload_write_bytes(fp,
+        if (payload_write_u32_crc(fp, &crc, comp_row_count, err, errlen) != 0) return -1;
+        if (payload_write_bytes_crc(fp, &crc,
                                 layer->attn_comp_kv +
                                     (uint64_t)comp_row_start * DS4_N_HEAD_DIM,
                                 (uint64_t)comp_row_count * DS4_N_HEAD_DIM * sizeof(float),
                                 err, errlen) != 0) return -1;
 
         if (ratio == 4) {
-            /* Indexer K/V slice. n_index_comp tracks the same ratio-4
-             * cadence as n_comp, so the same row range applies. */
             const uint32_t index_row_start = comp_row_start;
             const uint32_t index_row_count = comp_row_count;
             const uint32_t index_row_end   = index_row_start + index_row_count;
@@ -16864,8 +17051,8 @@ static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
                 payload_set_err(err, errlen, msg);
                 return -1;
             }
-            if (payload_write_u32(fp, index_row_count, err, errlen) != 0) return -1;
-            if (payload_write_bytes(fp,
+            if (payload_write_u32_crc(fp, &crc, index_row_count, err, errlen) != 0) return -1;
+            if (payload_write_bytes_crc(fp, &crc,
                                     layer->index_comp_kv +
                                         (uint64_t)index_row_start * DS4_N_INDEXER_HEAD_DIM,
                                     (uint64_t)index_row_count * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
@@ -16873,10 +17060,33 @@ static int kvblock_save_block_cpu(ds4_session *s, FILE *fp,
         }
     }
 
-    /* Trailer: CRC32 placeholder. Zero for v1 — we rely on the outer
-     * envelope (WombatKV's storage backend) for integrity. If we ever
-     * want self-checking blocks we bump version and fill this in. */
-    if (payload_write_u32(fp, 0u /*crc32*/, err, errlen) != 0) return -1;
+    long body_end = ftell(fp);
+    if (body_end < 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_cpu: ftell body_end failed");
+        return -1;
+    }
+    const uint64_t body_len_u64 = (uint64_t)(body_end - body_start);
+    if (body_len_u64 > (uint64_t)UINT32_MAX) {
+        payload_set_err(err, errlen, "kvblock_save_block_cpu: body_len exceeds u32");
+        return -1;
+    }
+    const uint32_t body_len = (uint32_t)body_len_u64;
+    const uint32_t body_crc = ds4_crc32c_finalize(crc);
+
+    /* Trailer: real CRC32C over body bytes (v2 — RFC 0018 Phase 2). */
+    if (payload_write_u32(fp, body_crc, err, errlen) != 0) return -1;
+    long trailer_end = ftell(fp);
+
+    /* Backpatch body_len into the header's repurposed `reserved` slot. */
+    if (fseek(fp, header_offset + 20, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_cpu: fseek backpatch failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, body_len, err, errlen) != 0) return -1;
+    if (fseek(fp, trailer_end, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_cpu: fseek end failed");
+        return -1;
+    }
     return 0;
 }
 
@@ -16904,19 +17114,29 @@ static int kvblock_save_block_gpu(ds4_session *s, FILE *fp,
     const uint32_t block_tokens = (uint32_t)(token_end - token_start);
     const uint32_t block_seq    = (uint32_t)token_start / block_tokens;
 
-    /* Header — byte-identical to CPU path. */
+    /* Header — byte-identical to CPU path. body_len in the old
+     * `reserved` slot is back-patched after body; trailer CRC32C is
+     * written at the end (RFC 0018 Phase 2). */
+    long header_offset = ftell(fp);
+    if (header_offset < 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_gpu: ftell header failed");
+        return -1;
+    }
     if (payload_write_u32(fp, DS4_KVBLOCK_MAGIC,   err, errlen) != 0) return -1;
     if (payload_write_u32(fp, DS4_KVBLOCK_VERSION, err, errlen) != 0) return -1;
     if (payload_write_u32(fp, block_seq,           err, errlen) != 0) return -1;
     if (payload_write_u32(fp, block_tokens,        err, errlen) != 0) return -1;
     if (payload_write_u32(fp, DS4_N_LAYER,         err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, 0u /*reserved*/,     err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u /*body_len placeholder*/, err, errlen) != 0) return -1;
+
+    long body_start = ftell(fp);
+    uint32_t crc = ds4_crc32c_init_state();
 
     uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
     int rc = 0;
     for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
         const uint32_t ratio = ds4_layer_compress_ratio(il);
-        if (payload_write_u32(fp, ratio, err, errlen) != 0) { rc = -1; break; }
+        if (payload_write_u32_crc(fp, &crc, ratio, err, errlen) != 0) { rc = -1; break; }
         if (ratio == 0) continue;
 
         const uint32_t comp_row_start = (uint32_t)token_start / ratio;
@@ -16933,8 +17153,8 @@ static int kvblock_save_block_gpu(ds4_session *s, FILE *fp,
             payload_set_err(err, errlen, msg);
             rc = -1; break;
         }
-        if (payload_write_u32(fp, comp_row_count, err, errlen) != 0) { rc = -1; break; }
-        rc = payload_write_tensor_span(fp,
+        if (payload_write_u32_crc(fp, &crc, comp_row_count, err, errlen) != 0) { rc = -1; break; }
+        rc = payload_write_tensor_span_crc(fp, &crc,
                                        g->layer_attn_comp_cache[il],
                                        (uint64_t)comp_row_start * DS4_N_HEAD_DIM * sizeof(float),
                                        (uint64_t)comp_row_count * DS4_N_HEAD_DIM * sizeof(float),
@@ -16954,8 +17174,8 @@ static int kvblock_save_block_gpu(ds4_session *s, FILE *fp,
                 payload_set_err(err, errlen, msg);
                 rc = -1; break;
             }
-            if (payload_write_u32(fp, index_row_count, err, errlen) != 0) { rc = -1; break; }
-            rc = payload_write_tensor_span(fp,
+            if (payload_write_u32_crc(fp, &crc, index_row_count, err, errlen) != 0) { rc = -1; break; }
+            rc = payload_write_tensor_span_crc(fp, &crc,
                                            g->layer_index_comp_cache[il],
                                            (uint64_t)index_row_start * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
                                            (uint64_t)index_row_count * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
@@ -16966,8 +17186,31 @@ static int kvblock_save_block_gpu(ds4_session *s, FILE *fp,
     free(buf);
     if (rc != 0) return -1;
 
-    /* Trailer — CRC32 placeholder (zero for v1, see CPU path comment). */
-    if (payload_write_u32(fp, 0u /*crc32*/, err, errlen) != 0) return -1;
+    long body_end = ftell(fp);
+    if (body_end < 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_gpu: ftell body_end failed");
+        return -1;
+    }
+    const uint64_t body_len_u64 = (uint64_t)(body_end - body_start);
+    if (body_len_u64 > (uint64_t)UINT32_MAX) {
+        payload_set_err(err, errlen, "kvblock_save_block_gpu: body_len exceeds u32");
+        return -1;
+    }
+    const uint32_t body_len = (uint32_t)body_len_u64;
+    const uint32_t body_crc = ds4_crc32c_finalize(crc);
+
+    if (payload_write_u32(fp, body_crc, err, errlen) != 0) return -1;
+    long trailer_end = ftell(fp);
+
+    if (fseek(fp, header_offset + 20, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_gpu: fseek backpatch failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, body_len, err, errlen) != 0) return -1;
+    if (fseek(fp, trailer_end, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_block_gpu: fseek end failed");
+        return -1;
+    }
     return 0;
 }
 #endif
@@ -17022,17 +17265,37 @@ int ds4_session_save_block(ds4_session *s, FILE *fp,
  * already in oldest-first order within [n_raw - raw_live, n_raw)) into a
  * RAW_TAIL envelope. raw_live = min(checkpoint.len, DS4_N_SWA). */
 static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
+                                     uint32_t prompt_tokens_count,
+                                     uint32_t block_tokens,
                                      char *err, size_t errlen) {
-    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    /* Save the SWA window AT THE PROMPT BOUNDARY, not at the live (post-decode)
+     * position. checkpoint_len_for_envelope is what the install side will use
+     * to position the raw bytes; it MUST be the prompt length so the install
+     * extends the checkpoint to the prompt length (not the post-response one). */
+    const uint32_t checkpoint_len = prompt_tokens_count;
     uint32_t raw_live = DS4_N_SWA;
     if (raw_live > checkpoint_len) raw_live = checkpoint_len;
 
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+    /* RFC 0018 Phase 1 envelope (16 bytes). body_len + body_crc32c are
+     * back-patched after the body is written. */
+    long envelope_offset = ftell(fp);
+    if (envelope_offset < 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail: ftell envelope failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,   err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u, err, errlen) != 0) return -1;  /* body_len placeholder */
+    if (payload_write_u32(fp, 0u, err, errlen) != 0) return -1;  /* body_crc placeholder */
+
+    long body_start = ftell(fp);
+    uint32_t crc = ds4_crc32c_init_state();
+
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)DS4_N_LAYER,    err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, raw_live,                  err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)DS4_N_HEAD_DIM,  err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)sizeof(float),   err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, checkpoint_len,            err, errlen) != 0) return -1;
 
     if (raw_live > 0) {
         for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
@@ -17043,13 +17306,76 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
                 return -1;
             }
             const uint32_t raw_start = layer->n_raw - raw_live;
-            if (payload_write_bytes(fp,
+            if (payload_write_bytes_crc(fp, &crc,
                                     layer->raw_kv + (uint64_t)raw_start * DS4_N_HEAD_DIM,
                                     (uint64_t)raw_live * DS4_N_HEAD_DIM * sizeof(float),
                                     err, errlen) != 0) return -1;
         }
     }
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    const uint32_t last_block_end = block_tokens > 0
+        ? (prompt_tokens_count / block_tokens) * block_tokens
+        : prompt_tokens_count;
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        const ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (ratio == 0) continue;
+        if (payload_write_bytes_crc(fp, &crc, layer->attn_state_kv,
+                                layer_attn_state_bytes(ratio), err, errlen) != 0) return -1;
+        if (payload_write_bytes_crc(fp, &crc, layer->attn_state_score,
+                                layer_attn_state_bytes(ratio), err, errlen) != 0) return -1;
+        const uint32_t blocks_comp_rows = last_block_end / ratio;
+        const uint32_t partial_comp_rows = (layer->n_comp > blocks_comp_rows)
+            ? (layer->n_comp - blocks_comp_rows) : 0;
+        if (payload_write_u32_crc(fp, &crc, partial_comp_rows, err, errlen) != 0) return -1;
+        if (partial_comp_rows > 0) {
+            if (payload_write_bytes_crc(fp, &crc,
+                    layer->attn_comp_kv + (uint64_t)blocks_comp_rows * DS4_N_HEAD_DIM,
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    err, errlen) != 0) return -1;
+        }
+        if (ratio == 4) {
+            if (payload_write_bytes_crc(fp, &crc, layer->index_state_kv,
+                                    layer_index_state_bytes(ratio), err, errlen) != 0) return -1;
+            if (payload_write_bytes_crc(fp, &crc, layer->index_state_score,
+                                    layer_index_state_bytes(ratio), err, errlen) != 0) return -1;
+            const uint32_t blocks_index_rows = last_block_end / ratio;
+            const uint32_t partial_index_rows = (layer->n_index_comp > blocks_index_rows)
+                ? (layer->n_index_comp - blocks_index_rows) : 0;
+            if (payload_write_u32_crc(fp, &crc, partial_index_rows, err, errlen) != 0) return -1;
+            if (partial_index_rows > 0) {
+                if (payload_write_bytes_crc(fp, &crc,
+                        layer->index_comp_kv + (uint64_t)blocks_index_rows * DS4_N_INDEXER_HEAD_DIM,
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        err, errlen) != 0) return -1;
+            }
+        }
+    }
+    /* END sentinel — part of body, covered by CRC. */
+    if (payload_write_u32_crc(fp, &crc, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+
+    long body_end = ftell(fp);
+    if (body_end < 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail: ftell body_end failed");
+        return -1;
+    }
+    const uint64_t body_len_u64 = (uint64_t)(body_end - body_start);
+    if (body_len_u64 > (uint64_t)UINT32_MAX) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail: body_len exceeds u32");
+        return -1;
+    }
+    const uint32_t body_len = (uint32_t)body_len_u64;
+    const uint32_t body_crc = ds4_crc32c_finalize(crc);
+
+    if (fseek(fp, envelope_offset + 8, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail: fseek backpatch failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, body_len, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, body_crc, err, errlen) != 0) return -1;
+    if (fseek(fp, body_end, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail: fseek end failed");
+        return -1;
+    }
     return 0;
 }
 
@@ -17059,45 +17385,152 @@ static int kvblock_save_raw_tail_cpu(const ds4_session *s, FILE *fp,
  * (phys = pos % raw_cap) so the on-disk byte order is logical
  * oldest-first regardless of the ring's wrap state. */
 static int kvblock_save_raw_tail_gpu(const ds4_session *s, FILE *fp,
+                                     uint32_t prompt_tokens_count,
+                                     uint32_t block_tokens,
                                      char *err, size_t errlen) {
     const ds4_gpu_graph *g = &s->graph;
-    const uint32_t checkpoint_len = (uint32_t)s->checkpoint.len;
+    /* See CPU save above. checkpoint_len in this function = "where the
+     * envelope says the prompt ended" — the install side will extend
+     * the restored checkpoint to this position. Use prompt_tokens_count
+     * so we skip response tokens that the cache has accumulated. */
+    const uint32_t checkpoint_len = prompt_tokens_count;
+    const uint32_t live_len = (uint32_t)s->checkpoint.len;
+    /* The GPU ring cache holds positions [live_len - raw_cap, live_len).
+     * To read the SWA window at the prompt boundary, the desired range
+     * [prompt - raw_live, prompt) must be a subset. Constrain raw_live
+     * so the start position is >= the oldest position the ring still has. */
     uint32_t raw_live = g->raw_window ? g->raw_window : DS4_N_SWA;
     if (raw_live > g->raw_cap) raw_live = g->raw_cap;
     if (raw_live > checkpoint_len) raw_live = checkpoint_len;
+    if (live_len > g->raw_cap) {
+        const uint32_t oldest_in_ring = live_len - g->raw_cap;
+        if (checkpoint_len > oldest_in_ring + raw_live) {
+            /* prompt's window is fully inside ring — no constraint */
+        } else if (checkpoint_len > oldest_in_ring) {
+            raw_live = checkpoint_len - oldest_in_ring;
+        } else {
+            raw_live = 0;
+        }
+    }
 
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,        err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION,      err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)DS4_N_LAYER,             err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, raw_live,                          err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)DS4_N_HEAD_DIM,           err, errlen) != 0) return -1;
-    if (payload_write_u32(fp, (uint32_t)sizeof(float),            err, errlen) != 0) return -1;
+    /* RFC 0018 Phase 1 envelope (16 bytes), back-patched after body. */
+    long envelope_offset = ftell(fp);
+    if (envelope_offset < 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail_gpu: ftell envelope failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_MAGIC,   err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_VERSION, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, 0u, err, errlen) != 0) return -1;  /* body_len placeholder */
+    if (payload_write_u32(fp, 0u, err, errlen) != 0) return -1;  /* body_crc placeholder */
 
-    if (raw_live > 0) {
+    long body_start = ftell(fp);
+    uint32_t crc = ds4_crc32c_init_state();
+
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)DS4_N_LAYER,    err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, raw_live,                  err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)DS4_N_HEAD_DIM,  err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, (uint32_t)sizeof(float),   err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, checkpoint_len,            err, errlen) != 0) return -1;
+
+    {
         uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
         int rc = 0;
+        if (raw_live > 0) {
+            for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+                const uint32_t raw_first = checkpoint_len - raw_live;
+                for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
+                    const uint32_t pos  = raw_first + r;
+                    const uint32_t phys = pos % g->raw_cap;
+                    rc = payload_write_tensor_span_crc(fp, &crc,
+                                                   g->layer_raw_cache[il],
+                                                   (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
+                                                   (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
+                                                   buf, DS4_SESSION_IO_CHUNK,
+                                                   err, errlen);
+                }
+            }
+        }
+        const uint32_t last_block_end = block_tokens > 0
+            ? (prompt_tokens_count / block_tokens) * block_tokens
+            : prompt_tokens_count;
         for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
-            const uint32_t raw_first = checkpoint_len - raw_live;
-            for (uint32_t r = 0; rc == 0 && r < raw_live; r++) {
-                const uint32_t pos  = raw_first + r;
-                const uint32_t phys = pos % g->raw_cap;
-                rc = payload_write_tensor_span(fp,
-                                               g->layer_raw_cache[il],
-                                               (uint64_t)phys * DS4_N_HEAD_DIM * sizeof(float),
-                                               (uint64_t)DS4_N_HEAD_DIM * sizeof(float),
-                                               buf, DS4_SESSION_IO_CHUNK,
-                                               err, errlen);
+            const uint32_t ratio = ds4_layer_compress_ratio(il);
+            if (ratio == 0) continue;
+            rc = payload_write_tensor_span_crc(fp, &crc, g->layer_attn_state_kv[il], 0,
+                                           layer_attn_state_bytes(ratio),
+                                           buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            if (rc == 0)
+                rc = payload_write_tensor_span_crc(fp, &crc, g->layer_attn_state_score[il], 0,
+                                               layer_attn_state_bytes(ratio),
+                                               buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            const uint32_t blocks_comp_rows = last_block_end / ratio;
+            const uint32_t partial_comp_rows =
+                (g->layer_n_comp[il] > blocks_comp_rows)
+                    ? (g->layer_n_comp[il] - blocks_comp_rows) : 0;
+            if (rc == 0) rc = payload_write_u32_crc(fp, &crc, partial_comp_rows, err, errlen);
+            if (rc == 0 && partial_comp_rows > 0) {
+                rc = payload_write_tensor_span_crc(fp, &crc, g->layer_attn_comp_cache[il],
+                    (uint64_t)blocks_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    buf, DS4_SESSION_IO_CHUNK, err, errlen);
+            }
+            if (rc == 0 && ratio == 4) {
+                rc = payload_write_tensor_span_crc(fp, &crc, g->layer_index_state_kv[il], 0,
+                                               layer_index_state_bytes(ratio),
+                                               buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                if (rc == 0)
+                    rc = payload_write_tensor_span_crc(fp, &crc, g->layer_index_state_score[il], 0,
+                                                   layer_index_state_bytes(ratio),
+                                                   buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                const uint32_t blocks_index_rows = last_block_end / ratio;
+                const uint32_t partial_index_rows =
+                    (g->layer_n_index_comp[il] > blocks_index_rows)
+                        ? (g->layer_n_index_comp[il] - blocks_index_rows) : 0;
+                if (rc == 0) rc = payload_write_u32_crc(fp, &crc, partial_index_rows, err, errlen);
+                if (rc == 0 && partial_index_rows > 0) {
+                    rc = payload_write_tensor_span_crc(fp, &crc, g->layer_index_comp_cache[il],
+                        (uint64_t)blocks_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        buf, DS4_SESSION_IO_CHUNK, err, errlen);
+                }
             }
         }
         free(buf);
         if (rc != 0) return -1;
     }
-    if (payload_write_u32(fp, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+    if (payload_write_u32_crc(fp, &crc, DS4_KVBLOCK_RAW_TAIL_END, err, errlen) != 0) return -1;
+
+    long body_end = ftell(fp);
+    if (body_end < 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail_gpu: ftell body_end failed");
+        return -1;
+    }
+    const uint64_t body_len_u64 = (uint64_t)(body_end - body_start);
+    if (body_len_u64 > (uint64_t)UINT32_MAX) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail_gpu: body_len exceeds u32");
+        return -1;
+    }
+    const uint32_t body_len = (uint32_t)body_len_u64;
+    const uint32_t body_crc = ds4_crc32c_finalize(crc);
+
+    if (fseek(fp, envelope_offset + 8, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail_gpu: fseek backpatch failed");
+        return -1;
+    }
+    if (payload_write_u32(fp, body_len, err, errlen) != 0) return -1;
+    if (payload_write_u32(fp, body_crc, err, errlen) != 0) return -1;
+    if (fseek(fp, body_end, SEEK_SET) != 0) {
+        payload_set_err(err, errlen, "kvblock_save_raw_tail_gpu: fseek end failed");
+        return -1;
+    }
     return 0;
 }
 #endif
 
 int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              uint32_t prompt_tokens_count,
+                              uint32_t block_tokens,
                               char *err, size_t errlen) {
     if (!s || !fp) {
         payload_set_err(err, errlen, "ds4_session_save_raw_tail: null arg");
@@ -17108,8 +17541,18 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
             "ds4_session_save_raw_tail: session has no valid checkpoint");
         return -1;
     }
+    /* prompt_tokens_count=0 means "use checkpoint.len" — only correct when
+     * save runs at end of prefill, before decode mutates the cache. */
+    if (prompt_tokens_count == 0) {
+        prompt_tokens_count = (uint32_t)s->checkpoint.len;
+    }
+    if (prompt_tokens_count > (uint32_t)s->checkpoint.len) {
+        payload_set_err(err, errlen,
+            "ds4_session_save_raw_tail: prompt_tokens_count > checkpoint.len");
+        return -1;
+    }
     if (ds4_session_is_cpu(s)) {
-        return kvblock_save_raw_tail_cpu(s, fp, err, errlen);
+        return kvblock_save_raw_tail_cpu(s, fp, prompt_tokens_count, block_tokens, err, errlen);
     }
 #ifdef DS4_NO_GPU
     payload_set_err(err, errlen,
@@ -17121,13 +17564,13 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
             "ds4_session_save_raw_tail: failed to synchronize Metal before save");
         return -1;
     }
-    return kvblock_save_raw_tail_gpu(s, fp, err, errlen);
+    return kvblock_save_raw_tail_gpu(s, fp, prompt_tokens_count, block_tokens, err, errlen);
 #endif
 }
 
 /* RFC 0007 §10.P5 raw-tail sidecar — install raw bytes from a buffer
  * into the session's SWA ring. Used by ds4_server after a successful
- * Tier B load_blocks + sidecar GET to skip the post-load re-prefill of
+ * block-prefix load + sidecar GET to skip the post-load re-prefill of
  * the last DS4_N_SWA tokens.
  *
  * Returns 0 on successful install, -1 on parse/layout/capacity error.
@@ -17137,34 +17580,69 @@ int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
 static int kvblock_install_raw_tail_cpu(ds4_session *s,
                                         const uint8_t *bytes, size_t len,
                                         char *err, size_t errlen) {
-    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+    /* RFC 0018 Phase 1 envelope (16 bytes) + minimum body prelude
+     * (20 bytes for v3 schema fields) + END sentinel (4 bytes). */
+    if (len < (size_t)(DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES
+                       + DS4_KVBLOCK_RAW_TAIL_BODY_PRELUDE_BYTES + 4u)) {
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: payload too small for envelope");
         return -1;
     }
-    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    /* Parse the fixed 16-byte envelope by raw u32 reads (LE). The body
+     * is then handed to fmemopen for the existing field-by-field
+     * parser. */
+    const uint32_t magic         = payload_get_u32(bytes + 0);
+    const uint32_t version       = payload_get_u32(bytes + 4);
+    const uint32_t body_len      = payload_get_u32(bytes + 8);
+    const uint32_t body_crc_hdr  = payload_get_u32(bytes + 12);
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: unsupported sidecar version "
+            "(alpha breaking-window: v3 envelopes don't load under v4; "
+            "wipe sidecar bucket and re-save)");
+        return -1;
+    }
+    if ((uint64_t)DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES + body_len != (uint64_t)len) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: envelope body_len mismatch with payload length");
+        return -1;
+    }
+    /* Verify CRC32C over the body before decoding any of it.
+     * Mismatch = silent corruption (S3 bit-flip, transport truncation,
+     * filesystem fault) — refuse the install rather than poison K/V. */
+    {
+        uint32_t state = ds4_crc32c_init_state();
+        state = ds4_crc32c_update(state,
+            bytes + DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES, (size_t)body_len);
+        const uint32_t body_crc_computed = ds4_crc32c_finalize(state);
+        if (body_crc_computed != body_crc_hdr) {
+            payload_set_err(err, errlen,
+                "ds4_session_install_raw_tail: body CRC32C mismatch — sidecar corrupt");
+            return -1;
+        }
+    }
+
+    FILE *fp = fmemopen((void *)(bytes + DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES),
+                        (size_t)body_len, "rb");
     if (!fp) {
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: fmemopen failed");
         return -1;
     }
-    uint64_t remaining = (uint64_t)len;
-    uint32_t magic = 0;
-    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
-        fclose(fp);
-        payload_set_err(err, errlen,
-            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
-        return -1;
-    }
-    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
-    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    uint64_t remaining = (uint64_t)body_len;
+    uint32_t n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    uint32_t original_total_tokens = 0;
     if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
-        || n_layers != (uint32_t)DS4_N_LAYER
+    if (payload_read_u32(fp, &original_total_tokens, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (n_layers != (uint32_t)DS4_N_LAYER
         || head_dim != (uint32_t)DS4_N_HEAD_DIM
         || bytes_per_elem != (uint32_t)sizeof(float)) {
         fclose(fp);
@@ -17178,19 +17656,84 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
             "ds4_session_install_raw_tail: n_raw_rows > SWA window");
         return -1;
     }
+    if (n_raw_rows > original_total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: n_raw_rows > original_total_tokens");
+        return -1;
+    }
+    if (original_total_tokens < (uint32_t)s->checkpoint.len) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: original_total_tokens shorter than checkpoint");
+        return -1;
+    }
+    /* Place raw bytes at logical positions [original_total_tokens - n_raw_rows,
+     * original_total_tokens). For the CPU linear cache that maps directly to
+     * the same physical indices. raw_first is the index of the first byte. */
+    const uint32_t raw_first = original_total_tokens - n_raw_rows;
     const uint64_t per_layer_bytes =
         (uint64_t)n_raw_rows * head_dim * bytes_per_elem;
     for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
         ds4_layer_cache *layer = &s->cpu_cache.layer[il];
-        if (n_raw_rows > layer->cap_raw) {
+        if (original_total_tokens > layer->cap_raw) {
             fclose(fp);
             payload_set_err(err, errlen,
-                "ds4_session_install_raw_tail: n_raw_rows > cpu cap_raw");
+                "ds4_session_install_raw_tail: original_total_tokens > cpu cap_raw");
             return -1;
         }
-        if (payload_read_bytes(fp, layer->raw_kv, per_layer_bytes,
+        if (payload_read_bytes(fp,
+                               layer->raw_kv + (uint64_t)raw_first * head_dim,
+                               per_layer_bytes,
                                &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-        layer->n_raw = n_raw_rows;
+        /* n_raw is the number of LIVE raw positions; advance to
+         * original_total_tokens so subsequent attention reads see the
+         * trailing-token K/V as well, and a future save preserves the
+         * same logical positions. */
+        layer->n_raw = original_total_tokens;
+    }
+    /* v3 extension — per-layer compressor state + partial-tail comp.
+     * Without these the compressor's running state is zero/stale AND
+     * the trailing-1 forward in ds4_session_sync reads zero comp K/V
+     * for partial-tail positions [last_block_end, original_total_tokens) →
+     * ~0.23 L∞ logit drift vs huge-blob's 0.04 (v5 finding in
+     * docs/MODE_VALIDATION.md). */
+    for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
+        ds4_layer_cache *layer = &s->cpu_cache.layer[il];
+        const uint32_t ratio = layer->compress_ratio;
+        if (ratio == 0) continue;
+        const uint64_t attn_bytes = layer_attn_state_bytes(ratio);
+        if (payload_read_bytes(fp, layer->attn_state_kv, attn_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        if (payload_read_bytes(fp, layer->attn_state_score, attn_bytes,
+                               &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        /* Partial-tail compressed K/V. After load_blocks, layer->n_comp
+         * is the row count from complete blocks; append partial rows. */
+        uint32_t partial_comp_rows = 0;
+        if (payload_read_u32(fp, &partial_comp_rows, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+        if (partial_comp_rows > 0) {
+            if (payload_read_bytes(fp,
+                    layer->attn_comp_kv + (uint64_t)layer->n_comp * DS4_N_HEAD_DIM,
+                    (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                    &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            layer->n_comp += partial_comp_rows;
+        }
+        if (ratio == 4) {
+            const uint64_t idx_bytes = layer_index_state_bytes(ratio);
+            if (payload_read_bytes(fp, layer->index_state_kv, idx_bytes,
+                                   &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            if (payload_read_bytes(fp, layer->index_state_score, idx_bytes,
+                                   &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            uint32_t partial_index_rows = 0;
+            if (payload_read_u32(fp, &partial_index_rows, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+            if (partial_index_rows > 0) {
+                if (payload_read_bytes(fp,
+                        layer->index_comp_kv + (uint64_t)layer->n_index_comp * DS4_N_INDEXER_HEAD_DIM,
+                        (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+                layer->n_index_comp += partial_index_rows;
+            }
+        }
     }
     uint32_t end_magic = 0;
     if (payload_read_u32(fp, &end_magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
@@ -17200,6 +17743,31 @@ static int kvblock_install_raw_tail_cpu(ds4_session *s,
             "ds4_session_install_raw_tail: missing end sentinel");
         return -1;
     }
+    /* Extend checkpoint to `original_total_tokens - 1` (NOT all the way
+     * to original_total_tokens). Leaving one token of suffix means
+     * ds4_session_sync runs exactly one forward pass on the final prompt
+     * token. That single forward pass populates `s->logits` (which is
+     * NOT preserved by the raw_tail envelope — it's a per-session output
+     * buffer). Without this trailing forward, decode samples from the new
+     * session's uninitialized logits buffer and produces garbage output
+     * (observed in coherence smoke: prompt about Count of Monte Cristo
+     * decodes to Russian text via stale-logits sampling).
+     *
+     * The K/V written by the suffix=1 forward overwrites the restored
+     * K/V at position N-1 — but with the same model weights and same
+     * input token, the computed K/V is bit-identical (modulo Metal
+     * non-determinism), so this is a free correctness check too.
+     *
+     * Cost: ~30 ms for one decode-style forward (vs ~1500 ms full
+     * re-prefill of the suffix when checkpoint isn't extended). Caller
+     * is responsible for overlaying real token IDs across the extended
+     * range via the live token vector. */
+    if (original_total_tokens >= 1) {
+        const uint32_t target_len = original_total_tokens - 1;
+        while ((uint32_t)s->checkpoint.len < target_len) {
+            token_vec_push(&s->checkpoint, 0);
+        }
+    }
     return 0;
 }
 
@@ -17208,34 +17776,65 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
                                         const uint8_t *bytes, size_t len,
                                         uint32_t total_tokens,
                                         char *err, size_t errlen) {
-    if (len < DS4_KVBLOCK_RAW_TAIL_HEADER_BYTES + 4u) {
+    /* RFC 0018 Phase 1 envelope (16 bytes) + minimum body prelude
+     * (20 bytes) + END sentinel (4 bytes). */
+    if (len < (size_t)(DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES
+                       + DS4_KVBLOCK_RAW_TAIL_BODY_PRELUDE_BYTES + 4u)) {
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: payload too small for envelope");
         return -1;
     }
-    FILE *fp = fmemopen((void *)bytes, len, "rb");
+    /* Parse the fixed 16-byte envelope by raw u32 reads (LE). */
+    const uint32_t magic         = payload_get_u32(bytes + 0);
+    const uint32_t version       = payload_get_u32(bytes + 4);
+    const uint32_t body_len      = payload_get_u32(bytes + 8);
+    const uint32_t body_crc_hdr  = payload_get_u32(bytes + 12);
+    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
+        return -1;
+    }
+    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: unsupported sidecar version "
+            "(alpha breaking-window: v3 envelopes don't load under v4; "
+            "wipe sidecar bucket and re-save)");
+        return -1;
+    }
+    if ((uint64_t)DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES + body_len != (uint64_t)len) {
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: envelope body_len mismatch with payload length (gpu)");
+        return -1;
+    }
+    /* Verify CRC32C over the body before decoding any of it. */
+    {
+        uint32_t state = ds4_crc32c_init_state();
+        state = ds4_crc32c_update(state,
+            bytes + DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES, (size_t)body_len);
+        const uint32_t body_crc_computed = ds4_crc32c_finalize(state);
+        if (body_crc_computed != body_crc_hdr) {
+            payload_set_err(err, errlen,
+                "ds4_session_install_raw_tail: body CRC32C mismatch — sidecar corrupt (gpu)");
+            return -1;
+        }
+    }
+
+    FILE *fp = fmemopen((void *)(bytes + DS4_KVBLOCK_RAW_TAIL_ENVELOPE_BYTES),
+                        (size_t)body_len, "rb");
     if (!fp) {
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: fmemopen failed");
         return -1;
     }
-    uint64_t remaining = (uint64_t)len;
-    uint32_t magic = 0;
-    if (payload_read_u32(fp, &magic, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-    if (magic != DS4_KVBLOCK_RAW_TAIL_MAGIC) {
-        fclose(fp);
-        payload_set_err(err, errlen,
-            "ds4_session_install_raw_tail: bad magic (not a RTT1 envelope)");
-        return -1;
-    }
-    uint32_t version = 0, n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
-    if (payload_read_u32(fp, &version,        &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    uint64_t remaining = (uint64_t)body_len;
+    uint32_t n_layers = 0, n_raw_rows = 0, head_dim = 0, bytes_per_elem = 0;
+    uint32_t original_total_tokens = 0;
     if (payload_read_u32(fp, &n_layers,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &n_raw_rows,     &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &head_dim,       &remaining, err, errlen) != 0) { fclose(fp); return -1; }
     if (payload_read_u32(fp, &bytes_per_elem, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
-    if (version != DS4_KVBLOCK_RAW_TAIL_VERSION
-        || n_layers != (uint32_t)DS4_N_LAYER
+    if (payload_read_u32(fp, &original_total_tokens, &remaining, err, errlen) != 0) { fclose(fp); return -1; }
+    if (n_layers != (uint32_t)DS4_N_LAYER
         || head_dim != (uint32_t)DS4_N_HEAD_DIM
         || bytes_per_elem != (uint32_t)sizeof(float)) {
         fclose(fp);
@@ -17250,10 +17849,16 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
         return -1;
     }
     ds4_gpu_graph *g = &s->graph;
-    if (n_raw_rows > total_tokens) {
+    if (n_raw_rows > original_total_tokens) {
         fclose(fp);
         payload_set_err(err, errlen,
-            "ds4_session_install_raw_tail: n_raw_rows > total_tokens (gpu)");
+            "ds4_session_install_raw_tail: n_raw_rows > original_total_tokens (gpu)");
+        return -1;
+    }
+    if (original_total_tokens < total_tokens) {
+        fclose(fp);
+        payload_set_err(err, errlen,
+            "ds4_session_install_raw_tail: original_total_tokens shorter than checkpoint (gpu)");
         return -1;
     }
     if (n_raw_rows > g->raw_cap) {
@@ -17262,7 +17867,9 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
             "ds4_session_install_raw_tail: n_raw_rows > graph raw_cap");
         return -1;
     }
-    const uint32_t raw_first = total_tokens - n_raw_rows;
+    /* Position raw bytes at logical positions [original_total_tokens - n_raw_rows,
+     * original_total_tokens). The GPU ring math (pos % raw_cap) handles wrap. */
+    const uint32_t raw_first = original_total_tokens - n_raw_rows;
     uint8_t *buf = xmalloc(DS4_SESSION_IO_CHUNK);
     int rc = 0;
     for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
@@ -17277,6 +17884,49 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
                                           &remaining, err, errlen);
         }
     }
+    /* v3 extension — per-layer compressor state + partial-tail comp. */
+    for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
+        const uint32_t ratio = ds4_layer_compress_ratio(il);
+        if (ratio == 0) continue;
+        rc = payload_read_tensor_span(fp, g->layer_attn_state_kv[il], 0,
+                                      layer_attn_state_bytes(ratio),
+                                      buf, DS4_SESSION_IO_CHUNK,
+                                      &remaining, err, errlen);
+        if (rc == 0)
+            rc = payload_read_tensor_span(fp, g->layer_attn_state_score[il], 0,
+                                          layer_attn_state_bytes(ratio),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+        uint32_t partial_comp_rows = 0;
+        if (rc == 0) rc = payload_read_u32(fp, &partial_comp_rows, &remaining, err, errlen) == 0 ? 0 : -1;
+        if (rc == 0 && partial_comp_rows > 0) {
+            rc = payload_read_tensor_span(fp, g->layer_attn_comp_cache[il],
+                (uint64_t)g->layer_n_comp[il] * DS4_N_HEAD_DIM * sizeof(float),
+                (uint64_t)partial_comp_rows * DS4_N_HEAD_DIM * sizeof(float),
+                buf, DS4_SESSION_IO_CHUNK, &remaining, err, errlen);
+            if (rc == 0) g->layer_n_comp[il] += partial_comp_rows;
+        }
+        if (rc == 0 && ratio == 4) {
+            rc = payload_read_tensor_span(fp, g->layer_index_state_kv[il], 0,
+                                          layer_index_state_bytes(ratio),
+                                          buf, DS4_SESSION_IO_CHUNK,
+                                          &remaining, err, errlen);
+            if (rc == 0)
+                rc = payload_read_tensor_span(fp, g->layer_index_state_score[il], 0,
+                                              layer_index_state_bytes(ratio),
+                                              buf, DS4_SESSION_IO_CHUNK,
+                                              &remaining, err, errlen);
+            uint32_t partial_index_rows = 0;
+            if (rc == 0) rc = payload_read_u32(fp, &partial_index_rows, &remaining, err, errlen) == 0 ? 0 : -1;
+            if (rc == 0 && partial_index_rows > 0) {
+                rc = payload_read_tensor_span(fp, g->layer_index_comp_cache[il],
+                    (uint64_t)g->layer_n_index_comp[il] * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                    (uint64_t)partial_index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float),
+                    buf, DS4_SESSION_IO_CHUNK, &remaining, err, errlen);
+                if (rc == 0) g->layer_n_index_comp[il] += partial_index_rows;
+            }
+        }
+    }
     free(buf);
     if (rc != 0) { fclose(fp); return -1; }
     uint32_t end_magic = 0;
@@ -17286,6 +17936,15 @@ static int kvblock_install_raw_tail_gpu(ds4_session *s,
         payload_set_err(err, errlen,
             "ds4_session_install_raw_tail: missing end sentinel (gpu)");
         return -1;
+    }
+    /* Extend checkpoint to `original_total_tokens - 1` so ds4_session_sync
+     * runs one forward pass on the final prompt token to populate
+     * `s->logits` — see CPU install for full rationale. */
+    if (original_total_tokens >= 1) {
+        const uint32_t target_len = original_total_tokens - 1;
+        while ((uint32_t)s->checkpoint.len < target_len) {
+            token_vec_push(&s->checkpoint, 0);
+        }
     }
     return 0;
 }
@@ -17312,19 +17971,21 @@ int ds4_session_install_raw_tail(ds4_session *s,
 #endif
 }
 
-/* Internal: read + verify one block header. On success returns the
- * declared block_tokens via out_block_tokens; on failure -1 with err. */
+/* Internal: read + verify one block header. On success populates
+ * *out_body_len with the v2 body-length field; on failure returns -1
+ * with err. */
 static int kvblock_read_header(FILE *fp, uint64_t *remaining,
                                uint32_t expected_block_tokens,
                                uint32_t expected_block_seq,
+                               uint32_t *out_body_len,
                                char *err, size_t errlen) {
-    uint32_t magic = 0, version = 0, seq = 0, tokc = 0, n_lay = 0, reserved = 0;
+    uint32_t magic = 0, version = 0, seq = 0, tokc = 0, n_lay = 0, body_len = 0;
     if (payload_read_u32(fp, &magic,    remaining, err, errlen) != 0) return -1;
     if (payload_read_u32(fp, &version,  remaining, err, errlen) != 0) return -1;
     if (payload_read_u32(fp, &seq,      remaining, err, errlen) != 0) return -1;
     if (payload_read_u32(fp, &tokc,     remaining, err, errlen) != 0) return -1;
     if (payload_read_u32(fp, &n_lay,    remaining, err, errlen) != 0) return -1;
-    if (payload_read_u32(fp, &reserved, remaining, err, errlen) != 0) return -1;
+    if (payload_read_u32(fp, &body_len, remaining, err, errlen) != 0) return -1;
     if (magic != DS4_KVBLOCK_MAGIC) {
         payload_set_err(err, errlen,
             "ds4_session_load_blocks: bad block magic (not a KVB1 block)");
@@ -17332,7 +17993,9 @@ static int kvblock_read_header(FILE *fp, uint64_t *remaining,
     }
     if (version != DS4_KVBLOCK_VERSION) {
         payload_set_err(err, errlen,
-            "ds4_session_load_blocks: unsupported block version");
+            "ds4_session_load_blocks: unsupported block version "
+            "(alpha breaking-window: v1 KVB1 blocks don't load under v2; "
+            "wipe block bucket and re-save)");
         return -1;
     }
     if (tokc != expected_block_tokens) {
@@ -17359,7 +18022,7 @@ static int kvblock_read_header(FILE *fp, uint64_t *remaining,
         payload_set_err(err, errlen, msg);
         return -1;
     }
-    (void)reserved;
+    if (out_body_len) *out_body_len = body_len;
     return 0;
 }
 
@@ -17397,14 +18060,18 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
     for (size_t i = 0; i < block_count; i++) {
         const ds4_block_handle *b = &blocks[i];
         uint64_t remaining = b->payload_bytes;
+        uint32_t header_body_len = 0;
         if (kvblock_read_header(b->fp, &remaining,
-                                block_tokens, (uint32_t)i, err, errlen) != 0) {
+                                block_tokens, (uint32_t)i, &header_body_len,
+                                err, errlen) != 0) {
             return -1;
         }
+        const uint64_t body_start_remaining = remaining;
+        uint32_t body_crc = ds4_crc32c_init_state();
         for (uint32_t il = 0; il < DS4_N_LAYER; il++) {
             ds4_layer_cache *layer = &s->cpu_cache.layer[il];
             uint32_t ratio = 0;
-            if (payload_read_u32(b->fp, &ratio, &remaining, err, errlen) != 0) return -1;
+            if (payload_read_u32_crc(b->fp, &body_crc, &ratio, &remaining, err, errlen) != 0) return -1;
             if (ratio != layer->compress_ratio) {
                 char msg[200];
                 snprintf(msg, sizeof(msg),
@@ -17417,7 +18084,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
             if (ratio == 0) continue;
 
             uint32_t comp_rows = 0;
-            if (payload_read_u32(b->fp, &comp_rows, &remaining, err, errlen) != 0) return -1;
+            if (payload_read_u32_crc(b->fp, &body_crc, &comp_rows, &remaining, err, errlen) != 0) return -1;
             const uint32_t expected_comp_rows = block_tokens / ratio;
             if (comp_rows != expected_comp_rows) {
                 char msg[200];
@@ -17431,7 +18098,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
             const uint32_t comp_row_start = (uint32_t)b->token_start / ratio;
             const uint64_t comp_offset    = (uint64_t)comp_row_start * DS4_N_HEAD_DIM;
             const uint64_t comp_bytes     = (uint64_t)comp_rows * DS4_N_HEAD_DIM * sizeof(float);
-            if (payload_read_bytes(b->fp,
+            if (payload_read_bytes_crc(b->fp, &body_crc,
                                    layer->attn_comp_kv + comp_offset,
                                    comp_bytes,
                                    &remaining, err, errlen) != 0) return -1;
@@ -17440,7 +18107,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
 
             if (ratio == 4) {
                 uint32_t index_rows = 0;
-                if (payload_read_u32(b->fp, &index_rows, &remaining, err, errlen) != 0) return -1;
+                if (payload_read_u32_crc(b->fp, &body_crc, &index_rows, &remaining, err, errlen) != 0) return -1;
                 if (index_rows != expected_comp_rows) {
                     char msg[200];
                     snprintf(msg, sizeof(msg),
@@ -17451,7 +18118,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
                 }
                 const uint64_t idx_offset = (uint64_t)comp_row_start * DS4_N_INDEXER_HEAD_DIM;
                 const uint64_t idx_bytes  = (uint64_t)index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
-                if (payload_read_bytes(b->fp,
+                if (payload_read_bytes_crc(b->fp, &body_crc,
                                        layer->index_comp_kv + idx_offset,
                                        idx_bytes,
                                        &remaining, err, errlen) != 0) return -1;
@@ -17459,10 +18126,30 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
                 if (idx_row_end > n_index_comp[il]) n_index_comp[il] = idx_row_end;
             }
         }
-        /* Trailer — CRC32 placeholder; tolerated as zero per v1. */
-        uint32_t crc = 0;
-        if (payload_read_u32(b->fp, &crc, &remaining, err, errlen) != 0) return -1;
-        (void)crc;
+        /* Body bytes consumed; validate length matches header's body_len. */
+        const uint64_t body_consumed = body_start_remaining - remaining;
+        if ((uint64_t)header_body_len != body_consumed) {
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                "ds4_session_load_blocks: block %zu header.body_len=%u != "
+                "actual body bytes consumed=%llu",
+                i, header_body_len, (unsigned long long)body_consumed);
+            payload_set_err(err, errlen, msg);
+            return -1;
+        }
+        /* Trailer: real CRC32C (v2 — RFC 0018 Phase 2). */
+        uint32_t trailer_crc = 0;
+        if (payload_read_u32(b->fp, &trailer_crc, &remaining, err, errlen) != 0) return -1;
+        const uint32_t body_crc_final = ds4_crc32c_finalize(body_crc);
+        if (trailer_crc != body_crc_final) {
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                "ds4_session_load_blocks: block %zu CRC32C mismatch "
+                "(header=%08x, computed=%08x) — block corrupt",
+                i, trailer_crc, body_crc_final);
+            payload_set_err(err, errlen, msg);
+            return -1;
+        }
         if (remaining != 0) {
             payload_set_err(err, errlen,
                 "ds4_session_load_blocks: block has trailing payload bytes");
@@ -17490,7 +18177,7 @@ static int kvblock_load_blocks_cpu(ds4_session *s,
      * common_prefix logic; for that to short-circuit prefill, the caller
      * must overlay the real token IDs before sync.
      *
-     * The contract is documented in ds4.h alongside load_blocks. For Tier B
+     * The contract is documented in ds4.h alongside load_blocks. For block-prefix
      * the placeholder is intentional: the C ABI surface returns a session
      * that has the right KV state but a placeholder token list, and the
      * caller (ds4_server / WombatKV bindings) is responsible for replacing
@@ -17555,14 +18242,18 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
     for (size_t i = 0; rc == 0 && i < block_count; i++) {
         const ds4_block_handle *b = &blocks[i];
         uint64_t remaining = b->payload_bytes;
+        uint32_t header_body_len = 0;
         if (kvblock_read_header(b->fp, &remaining,
-                                block_tokens, (uint32_t)i, err, errlen) != 0) {
+                                block_tokens, (uint32_t)i, &header_body_len,
+                                err, errlen) != 0) {
             rc = -1; break;
         }
+        const uint64_t body_start_remaining = remaining;
+        uint32_t body_crc = ds4_crc32c_init_state();
         for (uint32_t il = 0; rc == 0 && il < DS4_N_LAYER; il++) {
             uint32_t ratio = 0;
             const uint32_t expected_ratio = ds4_layer_compress_ratio(il);
-            if (payload_read_u32(b->fp, &ratio, &remaining, err, errlen) != 0) {
+            if (payload_read_u32_crc(b->fp, &body_crc, &ratio, &remaining, err, errlen) != 0) {
                 rc = -1; break;
             }
             if (ratio != expected_ratio) {
@@ -17577,7 +18268,7 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
             if (ratio == 0) continue;
 
             uint32_t comp_rows = 0;
-            if (payload_read_u32(b->fp, &comp_rows, &remaining, err, errlen) != 0) {
+            if (payload_read_u32_crc(b->fp, &body_crc, &comp_rows, &remaining, err, errlen) != 0) {
                 rc = -1; break;
             }
             const uint32_t expected_comp_rows = block_tokens / ratio;
@@ -17593,7 +18284,7 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
             const uint32_t comp_row_start = (uint32_t)b->token_start / ratio;
             const uint64_t comp_offset    = (uint64_t)comp_row_start * DS4_N_HEAD_DIM * sizeof(float);
             const uint64_t comp_bytes     = (uint64_t)comp_rows * DS4_N_HEAD_DIM * sizeof(float);
-            rc = payload_read_tensor_span(b->fp,
+            rc = payload_read_tensor_span_crc(b->fp, &body_crc,
                                           g->layer_attn_comp_cache[il],
                                           comp_offset, comp_bytes,
                                           buf, DS4_SESSION_IO_CHUNK,
@@ -17604,7 +18295,7 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
 
             if (ratio == 4) {
                 uint32_t index_rows = 0;
-                if (payload_read_u32(b->fp, &index_rows, &remaining, err, errlen) != 0) {
+                if (payload_read_u32_crc(b->fp, &body_crc, &index_rows, &remaining, err, errlen) != 0) {
                     rc = -1; break;
                 }
                 if (index_rows != expected_comp_rows) {
@@ -17617,7 +18308,7 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
                 }
                 const uint64_t idx_offset = (uint64_t)comp_row_start * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
                 const uint64_t idx_bytes  = (uint64_t)index_rows * DS4_N_INDEXER_HEAD_DIM * sizeof(float);
-                rc = payload_read_tensor_span(b->fp,
+                rc = payload_read_tensor_span_crc(b->fp, &body_crc,
                                               g->layer_index_comp_cache[il],
                                               idx_offset, idx_bytes,
                                               buf, DS4_SESSION_IO_CHUNK,
@@ -17628,11 +18319,32 @@ static int kvblock_load_blocks_gpu(ds4_session *s,
             }
         }
         if (rc == 0) {
-            uint32_t crc = 0;
-            if (payload_read_u32(b->fp, &crc, &remaining, err, errlen) != 0) {
+            /* Body bytes consumed; validate length matches header. */
+            const uint64_t body_consumed = body_start_remaining - remaining;
+            if ((uint64_t)header_body_len != body_consumed) {
+                char msg[160];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: block %zu header.body_len=%u != "
+                    "actual body bytes consumed=%llu",
+                    i, header_body_len, (unsigned long long)body_consumed);
+                payload_set_err(err, errlen, msg);
                 rc = -1; break;
             }
-            (void)crc;
+            /* Trailer: real CRC32C (v2 — RFC 0018 Phase 2). */
+            uint32_t trailer_crc = 0;
+            if (payload_read_u32(b->fp, &trailer_crc, &remaining, err, errlen) != 0) {
+                rc = -1; break;
+            }
+            const uint32_t body_crc_final = ds4_crc32c_finalize(body_crc);
+            if (trailer_crc != body_crc_final) {
+                char msg[160];
+                snprintf(msg, sizeof(msg),
+                    "ds4_session_load_blocks: block %zu CRC32C mismatch "
+                    "(header=%08x, computed=%08x) — block corrupt",
+                    i, trailer_crc, body_crc_final);
+                payload_set_err(err, errlen, msg);
+                rc = -1; break;
+            }
             if (remaining != 0) {
                 payload_set_err(err, errlen,
                     "ds4_session_load_blocks: block has trailing payload bytes");

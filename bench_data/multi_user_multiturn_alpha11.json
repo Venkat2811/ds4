@@ -1,0 +1,807 @@
+[
+  {
+    "mode": "native",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 21173,
+            "text": "We need to answer: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" This is a debugging question about a Python function returning None instead of a dict. The user wants the most common cause. We should provide a concise, direct answer, possibly with examples. Since it's a common issue, likely causes: forgetting to return a value, implicit return None, conditional paths not returning, mutable default arguments? But the most common is simply that the function doesn't have a return statement for all paths, or returns None explicitly. Also, maybe the function modifies a dict but doesn't return it, or returns the result of a method that returns None (like dict.pop? but that returns the value). Actually, the most common cause is that the function doesn't have a return statement at all, so it returns None by default. Or, there is a return statement but it's not reached in all code paths. Also, if the function is supposed to return a dict but instead returns None because of a conditional. Another common cause: accidentally returning the result of a function that returns None (e.g., .append, .sort). But the user says \"returns None when I expected it to return a dict",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 16678,
+            "text": "We need to answer: \"Once I fix that, what's the cleanest way to add type hints so this mistake gets caught before runtime?\" The user is asking for type hints to prevent the mistake of a function returning None when a dict is expected. The cleanest way is to use a return type hint of `dict` (or `Dict[K, V]`) and use static type checking (like mypy or pyright). Also, maybe use `Optional` or `Union` if None is valid, but if it's not valid, just `dict`. Also, use `-> dict` or `-> Dict[str, Any]` etc. The user wants to catch the mistake at static analysis time. So we should suggest adding type annotations for parameters and return type, and then running a type checker. Also, mention that if the function might return None, you should use `Optional[dict]` or `dict | None`, but if it's always a dict, just `dict`. We should give a code snippet showing how to add hints. Also, mention that using `-> dict` will cause mypy to flag any return path that doesn't return a dict (like returning None or not returning at all). Also, note that if the",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 18572,
+            "text": "Sure! Here's a clean single `pytest` test that exercises both success and failure paths using `pytest.mark.parametrize`:\n\n```python\nimport pytest\n\ndef my_function(condition: bool) -> dict | None:\n    \"\"\"Returns a",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 22255,
+            "text": "Here\u2019s a quick, cozy one-pan dinner that uses chicken thighs, onion, and coconut milk as the stars. It\u2019s inspired by Thai-style coconut bra",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 15871,
+            "text": "Absolutely \u2014 let\u2019s swap out the coconut for a creamy tomato sauce that works beautifully with chicken thighs, onion, chicken stock, cream, and tomato paste. This becomes a quick, one-pan skillet with a rich, savory sauce \u2014 kind of like a simplified, creamy \"paprika chicken\" or a French-style *poulet \u00e0 la cr\u00e8me* with tomato.\n\n---\n\n### Creamy Tomato & Paprika Chicken Thighs\n\n**Ingredients (serves 2\u20133)**\n- 4 boneless, skinless chicken thighs (or bone-in, but skin-on works too \u2014 adjust cook time by 2\u20133 minutes)\n- 1 medium onion, chopped\n",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 17545,
+            "text": "Great question \u2014 the creamy tomato sauce will pair perfectly with something that soaks up the juices. Here are two starches that cook in roughly the same time as the chicken (about 20\u201325 minutes total), so you can start them together:\n\n---\n\n### 1. Quick White Rice (e.g., Jasmine or long-grain)\n**Time:** ~20 minutes (including resting)  \n**How to time it:**  \n- Start the rice as soon as you begin saut\u00e9ing the onion for the chicken.  \n- Use a 1:1.5 ratio of rice to water (e.g., ",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 16063,
+            "text": "We need to answer: 10 days in Japan in late October. The user didn't specify nationality, so we should ask? But the instruction says \"Always note visa requirements when the user mentions their nationality or asks about a region with restrictive entry rules.\" They haven't mentioned nationality. We can proceed without visa info, but we might ask or give general info? Better to ask for nationality to tailor visa advice. Also, they want regions to prioritize. Late October is autumn, good for foliage. Suggest classic route: Tokyo, Kyoto, maybe Osaka/Nara, or go to Kanazawa? 10 days: could do Tokyo (3-4), Kyoto (3-4), and day trips. Or focus on one region like Kansai. Mention best season: late October is mild, crowds moderate, autumn colors starting. Logistics: suggest Hyperdia or Japan Rail Pass? Mention specific apps: Google Maps is excellent for transit, but for rail use Hyperdia or Japan Travel app. Booking: Klook or official sites for Shinkansen. Cost: budget $100-150/day, mid $200-300, high $400+. Customs: tipping not customary, quiet in public, temple etiquette. Safety: very safe. Underrated suggestion: visit Kanaz",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 18022,
+            "text": "We need to answer: user wants to skip Tokyo and Kyoto, use JR Pass for 10 days in late October. They've been to those cities. So suggest regions like Hokkaido? Or Kyushu? Or Tohoku? Or San'in? 10 days with JR Pass: need a loop or out-and-back. Late October: autumn foliage in northern Japan is good. Hokkaido might be too early for snow but nice. Kyushu has mild climate. Tohoku has great foliage. Kanazawa? They said skip Kyoto/Tokyo, but Kanazawa is nearby? Could do Kanazawa, then go up to Tohoku? Or go to Hiroshima and Kyushu? Let's think.\n\nJR Pass is expensive, worth it for long-distance travel. 10 days: could do a route: Osaka (skip Tokyo? Actually they said skip Tokyo and Kyoto, but Osaka is nearby? They might not want Kansai? Could still include Osaka but it's near Kyoto. Better to avoid Kansai entirely. Suggest: start in Kanazawa (via Tokyo but they can just fly into Haneda and take train to Kanazawa? Or start from Narita? They need to arrive somewhere. Assume they",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 21823,
+            "text": "We need to answer the user's latest question: \"How do I get from Kanazawa to Takayama without a car?\" This is a direct logistics question. The user is planning a 10-day Japan trip in late October, skipping Tokyo and Kyoto, using JR Pass. They've asked about regions, but now they're asking about a specific route. So we need to provide the best way to travel from Kanazawa to Takayama without a car.\n\nKey context: They have a JR Pass. So we should focus on train options. Kanazawa to Takayama: there is no direct Shinkansen. The typical route: take the JR Hokuriku Line from Kanazawa to Toyama, then transfer to the JR Takayama Line (Limited Express) from Toyama to Takayama. That route uses JR trains, so JR Pass covers it. However, there is also a bus option (Nohi Bus) that is direct, but that would not be covered by JR Pass. Since they have a JR Pass, the train is better. But we should mention both options, noting JR Pass coverage.\n\nAlso, note the season: late October, autumn foliage, so the train through the Hida region is scenic. Mention specific apps: Hyper",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 19155,
+            "text": "The rank of a matrix tells you the **dimension of the image** of the linear map it represents. Geometrically, if you think of the matrix as a transformation from \\(\\mathbb{R}^n\\) to \\(\\mathbb{R}^m\\), the rank is the number of independent directions in which the output can vary \u2014 it's the \"thickness\" of the output space.\n\n### Geometric picture\nTake a simple example: a \\(2\\times 3\\) matrix  \n\\[\nA = \\begin{pmatrix}1 & 0 & 0 \\\\ 0 & 0 & 0\\end{pmatrix}\n\\]  \napplied to any vector \\((",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 25295,
+            "text": "A 4\u00d74 matrix with rank 2 means the linear map from \\(\\mathbb{R}^4\\) to \\(\\mathbb{R}^4\\) has a 2-dimensional image. Geometrically, the output space is a **2\u2011dimensional plane** (a flat, infinite sheet) sitting inside \\(\\mathbb{R}^4\\). Not a line, not a 3D volume \u2013 just a plane. It might be tilted or oriented in any way, but it is exactly a 2\u2011dimensional subspace of the 4\u2011dimensional codomain.\n\nLet's make that concrete:\n\n",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 26817,
+            "text": "We need to answer: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" The student asks about the relationship between rank and eigenvalues for a square matrix. We need to clarify: rank 2 implies that the matrix has a 2-dimensional image, but eigenvalues are about eigenvectors and scaling. For a square matrix, rank deficiency means zero eigenvalues appear, but the number of non-zero eigenvalues is not necessarily equal to rank. Specifically, for a diagonalizable matrix, the rank equals the number of non-zero eigenvalues, but in general, rank equals the number of non-zero singular values, not eigenvalues. There's a common misconception: rank equals number of non-zero eigenvalues only for symmetric/hermitian matrices (or diagonalizable). For non-diagonalizable matrices, eigenvalues may be zero even if the geometric multiplicity is less, and the algebraic multiplicity of zero eigenvalue might be larger than the rank deficiency. Also, a matrix can have non-zero eigenvalues but still have rank less than the number of non-zero eigenvalues if eigenvalues are repeated and the matrix is defective? Actually, rank is the dimension of the column space. For a square matrix, the rank is n - nullity. The nullity is the dimension of the null space. The null space is related",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 19324,
+            "text": "You've heard correctly: opening with a character waking up is one of the most common clich\u00e9s in submission piles. But it's not automatically bad. The problem isn't the act of waking up \u2014 it's that most writers use it as a lazy way to introduce a character's morning routine, thoughts, or backstory without earning the reader's attention.\n\nA waking-up opening works when it does something specific and immediate:\n\n- It starts *in media res* with a crisis that forces",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 18914,
+            "text": "Great question. The key to an",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 22629,
+            "text": "We need to answer the user's follow-up question: \"How do I balance dialogue and interiority in that kind of opening?\" This follows from the previous exchange where the user asked about waking-up clich\u00e9s and then about opening in medias res without confusing names/places. The user is now asking about balancing dialogue and interiority specifically in that kind of opening (presumably an in medias res opening that avoids confusion). The assistant's last response was cut off mid-sentence (\"The key to an\"). I need to first complete that thought, then answer the new question.\n\nWait, the assistant's last message was: \"Great question. The key to an\" \u2014 and then cut off. That was likely a typo or system interruption. I should not leave it hanging. I need to pick up from where the assistant left off, but the user's new query is separate. However, the user is asking about \"that kind of opening\" referring to the previous discussion. So I should first complete the interrupted thought about in medias res, then address the dialogue/interiority balance.\n\nBut the user's current message is \"How do I balance dialogue and interiority in that kind of opening?\" \u2014 so I need to answer that directly. However, I should",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": null,
+    "bucket_counts_after_each_user": [],
+    "latency_stats": {
+      "turn1_median_ms": 19324,
+      "turn1_min_ms": 16063,
+      "turn1_max_ms": 22255,
+      "later_median_ms": 18743,
+      "later_min_ms": 15871,
+      "later_max_ms": 26817,
+      "intra_user_speedup": 1.03
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "embedded",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 16754,
+            "text": "The most common cause is simply that your function doesn't have a `return` statement for the expected path, so Python implicitly returns `None`. This happens when:\n\n- The function body lacks `return` altogether.\n- A conditional branch executes without hitting a `return`.\n- You `return` from some paths but not others.\n- The function ends without reaching a `return` statement (e.g., `while` loop exits without returning).\n\n**Quick check** \u2013 run this minimal reproduction:\n\n```python\ndef make_dict(condition):\n    if condition:\n        return {\"key\": \"value\"}\n    # no else branch, no fallback return\n\nresult",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 16517,
+            "text": "The cleanest approach is to use `-> dict` (not `Optional[dict]` or `dict | None`) and then let a type checker like **mypy** enforce that every code",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 19184,
+            "text": "The user wants a single pytest test that exercises both the success and the failure paths of a function that returns a dict when successful and None when it fails. They want to verify both cases in one test.\n\nI need to give a concrete example with a function that has a success path (returns dict) and a failure path (returns None). Then show a pytest test that tests both branches in a single test function, possibly using parametrize or a loop, or just sequential assertions.\n\nLet me craft a simple function: maybe one that parses a string to a dict (like JSON parsing). Success: returns dict. Failure: returns None (e.g., invalid input). Then a test that calls it with valid and invalid input and asserts both outcomes.\n\nThe user asked for \"a single pytest test\" - could be one test function with multiple assertions, or using pytest.mark.parametrize to have multiple scenarios. I'll show both options and explain.\n\nI'll write a function `parse_to_dict(s: str) -> dict | None` that tries `json.loads` and returns None on ValueError. Then a test with two cases: valid JSON and invalid JSON. Use parametrize for clarity, or just call twice with asserts.\n\nI'll keep it under ",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 27867,
+            "text": "We need to suggest a recipe using chicken thighs, onion, and coconut milk. Must be under 30 minutes. Likely a Thai-style coconut chicken curry or braise. Could be a quick simmer. Need to list ingredients with measurements, method steps numbered, substitutions, dietary constraints (none mentioned yet), storage/reheating, cuisine origin. Keep tone warm. Suggest side dish or beverage pairing.\n\nIngredients: chicken thighs (boneless skinless or bone-in? Assume boneless for speed), onion, coconut milk. Common pantry: maybe garlic, ginger, curry powder, fish sauce, lime, etc. But user only listed those three. We can suggest optional additions, but must be common pantry. We'll include salt, pepper, oil. Maybe soy sauce or curry powder. Let's assume they have basic spices.\n\nRecipe: Quick Coconut Braised Chicken Thighs with Onions. Serves 2-4.\n\nIngredients:\n- 4 chicken thighs (boneless, skinless, about 1-1.5 lbs)\n- 1 large onion, sliced\n- 1 can (13.5 oz) coconut milk\n- 1 tablespoon oil (vegetable or olive)\n- Salt and pepper to taste\n- Optional: 1 teaspoon curry powder",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 19576,
+            "text": "Absolutely, we can pivot that easily. Since coconut is out, we'll use chicken stock, cream, and tomato paste to build a rich, savory braise. Think of it as a creamy tomato chicken stew \u2014 not Thai, but more like a European-style comfort dish (similar to a quick chicken stroganoff or a creamy paprika braise). It'll be luscious, tangy, and onion-sweet.\n\nHere's the adapted recipe:\n\n---\n\n### Creamy Tomato Chicken Thighs with Onions (Coconut-Free)\n\n**Ingredients:**\n- 4 chicken thighs (boneless, skinless \u2014 about 1\u20131\u00bd lbs total)\n- 1 large onion",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 19433,
+            "text": "Great question \u2014 timing is everything when you're aiming for a 30-minute meal. The creamy tomato chicken braise needs about 20\u201325 minutes of simmering after the initial browning. So you want a starch that can cook in that same",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 17013,
+            "text": "We need to answer: \"I want to spend 10 days in Japan in late October. What regions should I prioritize?\" The user didn't specify nationality, but we should ask about visa requirements? They didn't mention nationality, but we can note general visa info for common travelers (e.g., US, EU, etc.) and ask to confirm. Also, late October is autumn, good for foliage. Prioritize regions: classic first-timer itinerary: Tokyo, Kyoto, maybe Osaka/Nara, plus day trips. With 10 days, could also do a side trip to Hakone or Nikko. But user asks \"regions\" \u2013 we can suggest Kanto (Tokyo), Kansai (Kyoto, Osaka, Nara), and perhaps a trip to Fuji area. Also mention best season: late October is mild, pleasant, foliage starting in Kyoto/Nara. Provide cost estimates per day, local customs, specific dishes, underrated suggestion. Since user didn't ask about visa, we can note that many nationalities get visa-free for 90 days, but verify. Also mention apps: Hyperdia or Japan Travel for trains, etc. Provide safety: very safe. End with underrated: maybe Kanazawa or Kurashiki? But",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 16609,
+            "text": "We need to answer: The user says they've been to Tokyo and Kyoto already, and wants a 10-day itinerary in late October using just the JR Pass. So we need to suggest regions that are accessible by JR Pass, which covers most of Japan but excludes some private lines (like some in Tokyo, but they're skipping Tokyo anyway). Late October is autumn foliage season. Good options: Northern Tohoku (Sendai, Yamagata, Aomori, Lake Towada) or Southern Hokkaido (Sapporo, Hakodate, Noboribetsu) but JR Pass covers Hokkaido too. Also maybe the Fuji area (Kawaguchiko) but that requires non-JR bus. Or Kanazawa, Takayama, and Shirakawago (but Shirakawago bus not covered by JR). Or Hiroshima, Miyajima, and maybe Fukuoka. But user wants to maximize JR Pass. Let's suggest a loop: start in Osaka? No, they said skip Kyoto, but Osaka is fine. Or start in Tokyo? They said skip Tokyo, but they could just use Tokyo as a transport hub? They said \"skip Tokyo and Kyoto\" meaning they don't want to stay there, but",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 17621,
+            "text": "We need to answer: The user asked \"How do I get from Kanazawa to Takayama without a car?\" This is a follow-up to the previous conversation where they want a 10-day itinerary using JR Pass and skipping Tokyo/Kyoto. But this question is specific: transport between Kanazawa and Takayama. The direct route by train is not straightforward because there's no direct JR line between them. The typical route is: Kanazawa -> Toyama (by Shinkansen) -> then take the JR Takayama Main Line from Toyama to Takayama. However, that line is not fully covered by JR Pass? Actually, the JR Takayama Main Line is a JR line, so it is covered by the JR Pass. But the journey from Toyama to Takayama takes about 3 hours. Alternatively, there is a bus: the \"Nohi Bus\" or \"JR Bus\" from Kanazawa to Takayama via Shirakawago, which is about 2.5 hours. But the user might want to use the JR Pass. Also, note that the JR Pass does not cover the bus. So we need to give both options: train via Toyama (JR Pass valid) or bus via Shirakawago (",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 35854,
+            "text": "We need to explain rank intuitively. The user wants an intuitive explanation of what rank tells about a linear map. Start with concrete example, geometric picture, then formal definition, then connect. Use column vectors, left-to-right multiplication. Give practice problem.\n\nKey points: rank = dimension of image (column space). Geometric: number of independent output directions. Also rank-nullity theorem: rank + nullity = domain dimension. For a matrix, rank = number of linearly independent columns (or rows). Intuition: if rank = full, then map is onto (if codomain dimension matches rank) or injective? Actually full rank means injective if domain dimension \u2264 codomain dimension? But careful: full rank can mean either surjective or injective depending on dimensions. Better: rank tells how many dimensions the map \"covers\" in the codomain. For a 2x3 matrix, max rank 2; if rank=2, map is onto (since codomain is R^2), but not injective because nullity >0. If rank=1, map collapses everything onto a line.\n\nStart with simple 2x2 matrix: scaling and rotation. For a diagonal matrix diag(2,0), rank=1; it squ",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 16554,
+            "text": "We need to interpret a 4x4 matrix with rank 2. The user asks about the shape of its image. So we need to give geometric intuition for a 4x4 matrix mapping R^4 to R^4. Rank 2 means the image (column space) is a 2-dimensional subspace of R^4. So the map collapses the 4-dimensional input space onto a 2-dimensional plane (a flat 2D subspace) inside the 4D output space. We can also talk about nullity = 2 because rank+nullity = 4. So the kernel is 2D as well. But focus on image: it's a plane, but not necessarily a \"plane\" in the usual 3D sense, but a 2D linear subspace in R^4. We can describe it as a \"hyper-plane\" but in 4D a 2D subspace is often called a \"2-plane\". The shape is like a flat, infinite 2D sheet, but embedded in 4D space. Also note that the map is not surjective onto R^4 (since rank < 4), so the image is a proper subspace. The nullspace is the set of inputs that get mapped to",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 19302,
+            "text": "We need to answer: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" The user wants to relate rank to eigenvalues. For a square matrix, rank relates to eigenvalues but careful: rank equals number of non-zero eigenvalues? Not exactly because eigenvalues can be zero but still have multiplicity, and also Jordan blocks matter. But for diagonalizable matrices, yes: rank = number of non-zero eigenvalues (counted with algebraic multiplicity? Actually geometric multiplicity? If diagonalizable, then number of non-zero eigenvalues (with multiplicity) = rank, because diagonal form has non-zero entries on diagonal for non-zero eigenvalues. But for non-diagonalizable, a nilpotent matrix like a Jordan block with eigenvalue zero has rank less than its nullity but eigenvalue zero with algebraic multiplicity > geometric multiplicity; e.g., 2x2 Jordan block [0 1; 0 0] has eigenvalue 0 with algebraic multiplicity 2, geometric multiplicity 1, rank 1. So rank \u2260 number of non-zero eigenvalues in general because zero eigenvalues can contribute to rank if the Jordan block has ones above diagonal. Actually, a zero eigenvalue always contributes to nullspace; but if the eigenvalue zero has a Jordan block of size >1, then the matrix's",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 17379,
+            "text": "You're right to question that rule of thumb. Waking-up openings *can* be clich\u00e9\u2014but they're not automatically bad. The issue isn't the action itself; it's how it's used.\n\n**Why it gets a bad reputation:** Many amateur stories use waking up as a lazy way to dump backstory (dream recap, staring at the ceiling, listing the day's obligations). The reader feels the author hasn't earned the opening\u2014it's exposition mas",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 16102,
+            "text": "We need to answer the writer's follow-up question. They asked: \"What's a way to open in medias res without burying the reader in confusing names and places?\" This is a practical craft question. The writer is clearly trying to avoid clich\u00e9 openings and wants to start in the middle of action but keep clarity.\n\nWe need to give concrete, actionable advice. The answer should be specific: techniques like anchoring via sensory detail, using a single clear image, delaying names, focusing on the character's immediate goal/problem. Also, we can reference the previous context (waking-up openings) but this is a new question. The writer wants methods for in medias res that avoid confusion.\n\nWe should provide examples or contrast. Keep it concise and practical. Maybe mention \"the rule of the first sentence\" \u2014 the first sentence should give the reader one solid thing to hold onto: a physical sensation, an urgent action, or a specific object. Then we can show a before/after example.\n\nAlso, we can tie back to their original concern: they want to avoid clich\u00e9 and also avoid confusion. So we can suggest that starting in medias res with a strong sensory or emotional anchor solves both problems.\n\nWe should avoid overly abstract theory. Provide a few concrete strategies",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 28583,
+            "text": "We need to address the writer's latest follow-up question: \"How do I balance dialogue and interiority in that kind of opening?\" The \"that kind\" refers to the in medias res opening they were just asking about. So they want to know how to mix external action/dialogue with internal thoughts/feelings without bogging down the opening or confusing the reader.\n\nWe should give practical craft advice. First, note the risk: in medias res openings need forward momentum, so too much interiority can slow the pace, while too much dialogue without context can confuse. The balance depends on the character's state and the story's genre/tone.\n\nPossible strategies: \n- Use interiority to *interpret* the dialogue, not to pause the action. The character's thoughts should react to what's being said, not wander.\n- Let dialogue carry subtext and the interiority reveal the subtext.\n- Keep interiority brief and immediate\u2014sentence fragments, sensations, not paragraphs.\n- Use dialogue to create a puzzle and interiority to show the character's attempt to solve it.\n- Example: a line of dialogue, then a single sentence of interiority that shows the character's emotional or tactical reaction.\n\nAlso, we can reference their original opening (w",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-embedded",
+    "bucket_counts_after_each_user": [
+      10,
+      24,
+      38,
+      54,
+      69
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 17379,
+      "turn1_min_ms": 16754,
+      "turn1_max_ms": 35854,
+      "later_median_ms": 18402,
+      "later_min_ms": 16102,
+      "later_max_ms": 28583,
+      "intra_user_speedup": 0.94
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": [
+      "intra-user speedup weak: 0.94\u00d7 (turn-1 median 17379ms vs later median 18402ms)"
+    ]
+  },
+  {
+    "mode": "daemon-shm",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 16300,
+            "text": "We need to answer the user's question: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" They're asking for the most common cause. As a Python expert, I should think about common pitfalls. The most common cause is likely forgetting to return the dict explicitly, or having a code path that doesn't return anything (implicitly returns None). Other causes: function returns from a conditional branch that doesn't have a return, or modifying a mutable default argument and then returning it but it becomes None? Actually, mutable defaults don't cause None. Another common cause: using .pop() or .get() incorrectly? No.\n\nI think the most common cause is simply that the function has a branch where there is no return statement, so it returns None. Or the function returns the result of a function that returns None, like .pop() on a dict? But .pop returns the value, not None. Or maybe the function modifies the dict but returns None because they didn't put a return. Also common: using .setdefault()? No.\n\nLet me craft a clear answer: explain that the most common cause is forgetting to return the dict from all code paths, especially in functions that have conditional",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 22058,
+            "text": "The user wants to know the cleanest way to add type hints to catch the mistake of returning None when expecting a dict. They want to prevent this mistake before runtime (i.e., using static type checking). I should suggest using `Optional` or `Union`? Actually, to catch it before runtime, they'd want to use type hints with a strict checker like mypy. The mistake is that the function should return a dict, but returns None. The cleanest way is to annotate the return type as `dict` (or `Dict[str, Any]` etc.) and then run mypy in strict mode, which will catch any code path that returns None. However, if the function intentionally returns None in some cases, they'd need `Optional[dict]`. But they want to catch the mistake, so they'd want to enforce that it always returns a dict. So the cleanest is to add a return type of `dict` and ensure no bare `return` or `return None`. Then mypy will flag any missing return. I can show an example.\n\nI should also mention that using `Literal` or `NoReturn`? Not needed. The simplest is `def foo() -> dict:`. But if the function might return a",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 27579,
+            "text": "The user asks: \"And how would I write a single pytest test that exercises both the success and the failure paths?\" They want a test for a function that should return a dict but might return None. They want to test both paths. I need to show a concise pytest test. Use parametrize or a conditional inside the test? The cleanest is to use `pytest.mark.parametrize` with different inputs, or a loop. Since the user asked for a single test, I can show a parametrized test with two cases: one that succeeds (returns dict) and one that fails (returns None). Use `pytest.raises`? Actually, they want to exercise both paths, not necessarily assert that the failure path raises an error. They might want to assert that the success path returns a dict and the failure path returns None. So I can show a parametrized test with expected output. But the user said \"single pytest test\". I think a parametrized test counts as one test function. I'll show that.\n\nI need to be careful: the user's context is about a function that returns None when expected dict. They fixed the return, added type hints, now want to test. So I'll provide a paramet",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 39375,
+            "text": "Here\u2019s a quick, warming Thai-inspired coconut chicken braise that comes together in about 30 minutes using only a pan. The coconut",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 25625,
+            "text": "Absolutely! Since coconut is out, let's pivot to a creamy tomato braise. The chicken stock, cream, and tomato paste will create a rich, savory sauce that pairs beautifully with the chicken thighs and onion. It\u2019s a quick French-inspired pan",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 30791,
+            "text": "Great question \u2014 timing is everything. Since the chicken braise takes about 30 minutes total (including prep), you want a starch that's done in roughly the same window or can be started alongside it.\n\n**Here's the best match: egg noodles** (cook time: 7\u201310 minutes). They soak up that creamy tomato",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 30470,
+            "text": "We need to answer: 10 days in Japan in late October. Best season? Late October is autumn, good weather, foliage. Prioritize regions: classic first-timer: Tokyo, Kyoto, maybe Osaka, plus day trips (Nara, Hakone). But 10 days: Tokyo (3-4 days), Kyoto (3-4 days), Osaka (2 days) or add a day in Hakone? Or include Hiroshima? Let's give a balanced itinerary. Mention visa: many nationalities get 90-day tourist visa on arrival, but check for specific nationalities (US, Canada, UK, etc. are fine). Mention currency: Japanese yen. Transport: Shinkansen (bullet train) \u2013 book via JR Pass or individual tickets. Apps: Hyperdia or Google Maps for train times, Japan Rail Pass (if worth it), Klook for some bookings. Accommodation: Booking.com, Agoda, Airbnb. Costs: budget \u00a510k-15k/day, mid \u00a520k-30k, high \u00a550k+. Customs: tipping not typical, dress modestly at temples, quiet on trains. Safety: very safe, but be aware of scams in tourist areas. Underrated suggestion: visit Kanazawa or Nikko instead of",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 32449,
+            "text": "We need to answer: user wants 10 days in Japan late October, but skip Tokyo and Kyoto. They've been there. So they want regions outside those. They want itinerary using JR Pass. So focus on areas accessible by JR train. Late October autumn foliage. Possible regions: Hokkaido? Sapporo? But late October in Hokkaido is cold, foliage but not peak? Or Tohoku? Sendai, Nikko? Or Kanazawa, Shirakawa-go? Or Hiroshima, Miyajima? Or Kyushu? Fukuoka, Nagasaki, Kagoshima? Or Shikoku? But JR Pass covers most of mainland except some private lines. Need to plan 10 days with JR Pass. Suggest a loop or route. Also mention visa, currency, customs, safety, underrated suggestion. User didn't specify nationality; assume they are from a visa-free country (US/UK/etc.). But note that visa requirements vary. We'll note that. Provide specific itinerary: e.g., start in Osaka (if they didn't skip? they said skip Tokyo/Kyoto, so Osaka might be fine? Or maybe skip all Kansai? Better to include Osaka as base? Or go to Hiroshima, then Fuku",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 25485,
+            "text": "We need to answer: how to get from Kanazawa to Takayama without a car. This is a specific transport question. Kanazawa is in Ishikawa, Takayama in Gifu. Direct? There is a bus or train. Train: Kanazawa to Toyama via Hokuriku Shinkansen, then Toyama to Takayama via JR Takayama Main Line (limited express). But the JR Takayama Main Line is not fully covered by JR Pass? Actually, the section from Toyama to Takayama is JR, so covered by JR Pass. However, there is also a direct bus: Nohi Bus or Hokutaka Bus? Actually, there is a highway bus from Kanazawa to Takayama operated by Nohi Bus and Hokutaka? Let's check: Kanazawa to Takayama bus runs via Shirakawa-go. It's called \"Kanazawa - Takayama\" bus, operated by Nohi Bus and Hokutaka Bus. Takes about 3 hours. Alternatively, train: Kanazawa -> Toyama (Shinkansen, 20 min), then Toyama -> Takayama (Limited Express \"Hida\", 2 hours). Total ~2.5 hours.",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 33778,
+            "text": "The rank of a matrix tells you **how many independent directions** the linear map can output. More concretely: if you think of the matrix as a transformation from \u211d\u207f to \u211d\u1d50, the rank is the dimension of the **image** (the set of all possible output vectors). That\u2019s the geometric meaning.\n\n### Geometric Picture\nSuppose you have a 3\u00d73 matrix (so map \u211d\u00b3 \u2192 \u211d\u00b3).  \n- If rank = 3,",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 30265,
+            "text": "Great question. Let\u2019s build intuition step by step.\n\n**Geometric picture first.**  \nA 4\u00d74 matrix maps \u211d\u2074 \u2192 \u211d\u2074. If its rank is 2, that means the **image** (the set of all possible output vectors) is a 2\u2011dimensional flat subspace inside \u211d\u2074.  \n\nIn everyday 3D terms, a 2\u2011dimensional subspace is a plane (through the origin). So the image of this 4D",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 39362,
+            "text": "We need to address the relationship between rank and eigenvalues. The student asks: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" This is a common misconception. We need to clarify that rank and eigenvalues are related but not directly in that way. For a real square matrix, rank tells about dimension of image, but eigenvalues are about scaling along eigenvectors. However, rank can be related to the number of nonzero eigenvalues only if the matrix is diagonalizable or if we consider algebraic multiplicity? Actually, for any square matrix, the rank is at least the number of nonzero eigenvalues (counting multiplicities) because eigenvectors for nonzero eigenvalues are linearly independent and lie in the column space. But the rank can be larger than the number of nonzero eigenvalues if there are defective eigenvalues (e.g., Jordan blocks). Also, the rank is equal to the number of nonzero singular values, but eigenvalues are different. So the answer: rank 2 does NOT necessarily imply exactly two nonzero eigenvalues. It could be that there is one nonzero eigenvalue with multiplicity 2 (if the matrix is not diagonalizable) or even zero eigenvalues with algebraic multiplicity > geometric multiplicity. We should give a concrete example: a nilpotent matrix of rank 2 but all eigenvalues zero (e.g.,",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 28306,
+            "text": "Great question. The \"waking up\" opening is absolutely a clich\u00e9 \u2014 but clich\u00e9s become clich\u00e9s because they work in certain contexts. The problem isn't the act of waking up; it's that many openings use waking up as a default start, a neutral gear-shift into the story, without earning that moment.\n\nA waking-up opening succeeds when the waking itself *does narrative work*: disorientation (revealing character through perception), immediate stakes (the alarm didn't go off, someone's in the room), or tonal immersion",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 25827,
+            "text": "Good instinct. The trick to in medias res without confusion is to **ground the reader in physical sensation and specific action before you introduce names, locations, or backstory.** The reader doesn't need to know who the character is or where they are\u2014they need to know *what is happening to the character right now* and *what the character is doing about it.*\n\nHere are three concrete techniques:\n\n",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 28855,
+            "text": "We need to answer the user's follow-up question: \"How do I balance dialogue and interiority in that kind of opening?\" The user is writing a short story, concerned about clich\u00e9d waking-up openings, and now asking about balancing dialogue and interiority in an in medias res opening. The assistant has already given advice on in medias res openings (grounding in sensation/action before names/places). Now the user wants to know how to balance dialogue and interiority within that.\n\nThe assistant's role is a fiction editor with specific craft focus. The assistant should give concrete, actionable feedback. The user likely wants practical techniques: how much interiority vs. dialogue, when to shift between them, how to avoid info-dump or confusion. The assistant can reference the previous advice about grounding in sensation/action first.\n\nPotential answer structure:\n- Acknowledge that dialogue and interiority serve different functions: dialogue creates immediacy, reveals relationship dynamics, adds subtext; interiority gives access to character's mind, emotions, interpretations.\n- In an in medias res opening, prioritize one at a time. Start with sensory action, then add interiority or dialogue as needed.\n- Use a rule of thumb: if a line of dialogue could be replaced by a",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-shm",
+    "bucket_counts_after_each_user": [
+      29,
+      67,
+      99,
+      138,
+      176
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 30470,
+      "turn1_min_ms": 16300,
+      "turn1_max_ms": 39375,
+      "later_median_ms": 28217,
+      "later_min_ms": 22058,
+      "later_max_ms": 39362,
+      "intra_user_speedup": 1.08
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": [
+      "intra-user speedup weak: 1.08\u00d7 (turn-1 median 30470ms vs later median 28217ms)"
+    ]
+  },
+  {
+    "mode": "daemon-tcp",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 15883,
+            "text": "The most common cause is a **missing return statement in one or more code",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 30933,
+            "text": "We need to answer the user's follow-up: after fixing the missing return issue, they want to know the cleanest way to add type hints so that mistake gets caught before runtime. The user is asking about type hints to catch the \"returns None when expected dict\" mistake. The \"cleanest\" approach likely involves using a static type checker like mypy or pyright, and specifying that the function should return a dict, but also potentially using something like `assert` or `Never`? But the question is about type hints themselves.\n\nI need to provide a concise, practical answer. The typical way: annotate the return type as `dict` (or a specific dict type like `Dict[str, Any]`). Then run a static type checker (e.g., mypy). That would catch if a code path returns None or doesn't return at all. Also mention `--strict` mode.\n\nBut the user wants \"cleanest way to add type hints so this mistake gets caught before runtime\". That's straightforward: add return type annotation `-> dict` and run mypy. However, they might be asking about the best practice for type hints in this scenario. Could also mention using `Optional`? No, if they expect dict, they should not",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 27507,
+            "text": "The user is asking a follow-up question: after fixing the missing return issue and adding type hints, they want to write a single pytest test that exercises both success and failure paths. The user is a software engineer who wants a concrete code example.\n\nThe context: the original issue was a function that returns None instead of a dict. The user fixed that and added type hints. Now they want a single pytest test that tests both paths (success: returns dict, failure: returns None? Or maybe they want to test that the function doesn't return None?).\n\nBut the phrase \"both success and the failure paths\" is ambiguous: it could mean testing that the function correctly returns a dict when it should, and that it handles an error case gracefully (maybe returning None or raising an exception). However, the user already said \"I fixed the missing return, what's the cleanest way to add type hints...\". Now they want to write a pytest test that exercises both paths. Possibly they want to test that after the fix, the function always returns a dict, and also test that if something goes wrong, it doesn't silently return None.\n\nI need to propose a concrete pytest test that covers the two scenarios. I'll assume the function is something like `process_data(input)`",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 35761,
+            "text": "Absolutely! With chicken thighs, onion, and coconut milk, you can make a quick and creamy **Coconut Braised Chicken** with a Southeast Asian-inspired flavor. It\u2019s a one-pan meal that comes together in about 30 minutes, and it\u2019s forgiving enough for a weeknight.\n\n---\n\n### **Quick Coconut Chicken (serves 2\u20133)**\n\n**Ingredients:**\n- 4",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 33248,
+            "text": "We need to adapt the previous recipe because the user is allergic to coconut. They have chicken thighs, onion, chicken stock, cream, and tomato paste. They also still have the chicken thighs and onion from the original list. So we need to create a different recipe using those ingredients, replacing coconut milk with chicken stock + cream + tomato paste. The user didn't mention any other constraints, but we should note the allergy. The original recipe was \"Coconut Braised Chicken\" but now we need a non-coconut version. Let's think of a creamy tomato-based braise. Perhaps a creamy tomato chicken stew or a \"Chicken Stroganoff\" style? But we have chicken thighs, onion, stock, cream, tomato paste. Could do a creamy tomato sauce with chicken thighs. Since the user asked \"Can we adapt that with what I have\", we should provide a recipe that uses those specific ingredients and explains substitutions.\n\nAlso note: The user said \"coconut milk\" originally, but they are allergic. So we adapt to chicken stock, cream, tomato paste. That combination can create a creamy tomato sauce. We'll need to adjust seasonings. Possibly add some herbs, garlic if they have it, but they only listed chicken thighs, onion, chicken stock",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 30257,
+            "text": "We need to respond to the user's follow-up: \"What's a starch I can serve with it that takes the same amount of time?\" This is after we provided an adapted recipe (which we haven't actually written yet in the conversation). The user's last message was \"I'm allergic to coconut. Can we adapt that with what I have \u2014 chicken stock, cream, and tomato paste?\" and then we were about to respond but the user then said \"What's a starch I can serve with it that takes the same amount of time?\" So the user is asking for a starch side dish that can be cooked in the same 30-minute timeframe as the main dish.\n\nWe need to first provide the adapted recipe (since we haven't yet), and then answer the starch question. However, the user seems to be asking for the starch before the recipe is given. But we should provide both in a cohesive answer.\n\nSo the plan: First, provide the adapted recipe using chicken stock, cream, and tomato paste, noting it's a creamy tomato chicken braise (maybe a quick \"creamy tomato chicken\" or \"chicken in creamy tomato sauce\"). Then, suggest a starch that takes about 30 minutes: e.g., egg noodles (boil 8-",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 33724,
+            "text": "We need to answer: 10 days in Japan in late October. Regions to prioritize. Late October is autumn, foliage starting, good weather. Typical first-timers: Tokyo, Kyoto, maybe Osaka, Nara, Hakone, or Hiroshima. But 10 days, need realistic. Suggest classic \"Golden Route\": Tokyo (3-4 days), Kyoto (3-4 days), plus day trips (Nara, maybe Osaka). Could add Nikko or Hakone for nature. Mention weather: cool, pleasant, 15-20\u00b0C, some rain. Also mention leaf viewing spots. Cost ranges. Visa: many nationalities need visa? User didn't specify nationality, so note general: many countries have visa waiver for tourism up to 90 days (US, Canada, EU, Australia, etc.), but check. Provide specific booking sites: Japan Rail Pass (for tourists), Klook, Hyperdia (train schedules), Google Maps. Local customs: tipping not expected, shoes off in homes/ryokan, quiet on trains. Specific dishes: ramen, okonomiyaki, takoyaki, sushi from Tsukiji market. Underrated: Kanazawa (famous gardens, less crowded). Also mention safety: very safe. Format",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 23520,
+            "text": "We need to answer: user wants to skip Tokyo and Kyoto, has been there. 10 days in late October, use JR Pass. So we need alternative regions accessible by JR trains. Options: Hokkaido (Sapporo, Hakodate), Tohoku (Sendai, Aomori, Nikko maybe), Kanazawa (already mentioned), Hiroshima, Miyajima, Fukuoka, Kyushu, or even Osaka but they said skip Tokyo/Kyoto, so Osaka might be considered? But Osaka is near Kyoto, maybe they want something different. Possibly Shikoku? But JR Pass covers Shikoku? Yes, but limited. Better: Hokkaido is far, JR Pass covers but requires long travel time, maybe not efficient for 10 days. Tohoku: Sendai, Aomori, maybe Nikko (but Nikko is near Tokyo). Kanazawa is accessible via Hokuriku Shinkansen from Tokyo, but they skip Tokyo, so can start from Kanazawa? Or from Osaka? They could fly into Osaka or Tokyo and then use JR Pass to go to Kanazawa, then further to Hiroshima, etc. But they said skip Tokyo, so maybe start from Osaka? Actually they",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 30579,
+            "text": "We need to answer: user wants to get from Kanazawa to Takayama without a car. This is in Japan. Takayama is in the Japanese Alps. Kanazawa is on the west coast. The direct route: there is a bus connection. The \"Nohi Bus\" or \"Hokutaku Bus\" operates between Kanazawa and Takayama via Shirakawa-go. The trip takes about 3.5 hours. Alternatively, train: Kanazawa to Toyama, then to Takayama via the JR Takayama Line, but that requires changing at Toyama and using limited express trains, and the JR Takayama Line is not fully covered by JR Pass if you go beyond? Actually, JR Takayama Line is JR, so JR Pass works, but the train from Toyama to Takayama is not shinkansen, it's a limited express \"Hida\" which takes about 2 hours from Toyama, plus from Kanazawa to Toyama is 20 minutes by shinkansen. So total about 2.5 hours. But the bus is more direct and scenic. Also mention that in late October, foliage is good. So provide specific bus company: \"Nohi Bus\" or \"Hokutaku",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 38930,
+            "text": "We need to explain rank intuitively, geometrically. The user asks: \"Can you intuitively explain what the rank of a matrix tells me about the linear map it represents?\" So we need to connect rank to the geometry of the linear transformation. We'll start with a concrete example: a 2x3 matrix mapping from R^3 to R^2. Show that rank = dimension of image (column space). Then formal definition: rank = number of linearly independent columns (or rows). Then relate: rank tells how many dimensions the output space has, i.e., the \"richness\" of the mapping. If rank is less than the dimension of the domain, some directions get squashed to zero (null space). If rank equals dimension of codomain, map is onto (surjective). If rank equals dimension of domain, map is injective (if square matrix, invertible). Then practice problem: Given a matrix, compute its rank and interpret geometrically. We'll give a simple 2x3 matrix and ask to find rank and what it means for the mapping.\n\nWe need to use notation: column vectors, left-to-right matrix multiplication. Write matrices in LaTeX-style plain text: e.g., A = [ [1,2,3], [",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 33979,
+            "text": "We need to answer: \"If a 4x4 matrix has rank 2, what does that mean about the shape of its image?\" This is a follow-up question building on the previous explanation of rank. The user wants an intuitive geometric explanation.\n\nWe start with a concrete example: a 4x4 matrix with rank 2 maps R^4 to R^4, but its image is a 2-dimensional subspace of R^4. So the image is a plane (2D flat) inside R^4, not a full 4D space. That means the map collapses two dimensions (null space has dimension 2). The shape of the image is a 2D subspace, so it's \"flat\" \u2014 all output vectors lie in that plane. We can visualize by analogy: a 3x3 matrix with rank 2 maps R^3 onto a plane through the origin in R^3.\n\nThen formal definition: rank = dimension of column space (image). So rank 2 means image has dimension 2.\n\nThen relate: The matrix has 4 rows and 4 columns; rank 2 means only two columns are linearly independent, so the column space is a 2D subspace of R^4. The row space also",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 28087,
+            "text": "We need to answer: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" This is a deeper question linking rank to eigenvalues for a square matrix. The user is asking specifically about a 4x4 matrix with rank 2. We need to be careful: eigenvalues and rank are not directly linked in general. For a diagonalizable matrix, rank equals number of non-zero eigenvalues (since eigenvalues on diagonal determine rank of diagonal matrix). But for non-diagonalizable matrices, rank can be less than number of non-zero eigenvalues (e.g., a nilpotent matrix with rank 1 but eigenvalue 0 only). So we need to clarify: rank 2 does not necessarily imply two non-zero eigenvalues. It implies that the column space is 2D, but eigenvalues depend on the matrix's Jordan form. For a diagonalizable matrix, yes, rank = number of non-zero eigenvalues. But in general, rank gives the dimension of the image, while eigenvalues give scaling factors along eigenvectors; zero eigenvalues correspond to null space directions, but non-zero eigenvalues are not always present. Actually, if a matrix has rank 2, its null space has dimension 2, so eigenvalue 0 has multiplicity at least 2. But there could be",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 42786,
+            "text": "You've heard right: opening with a character",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 26779,
+            "text": "We need to answer the user's follow-up question: \"What's a way to open in medias res without burying the reader in confusing names and places?\" This follows from the previous exchange where the user asked about the clich\u00e9 of waking-up openings, and I was cut off mid-sentence. So I need to provide a helpful, concrete answer about opening in medias res without info-dumping.\n\nThe user is a fiction writer seeking craft advice. They want a practical technique. I should give a clear, actionable method: show the reader a specific, vivid moment that implies context without explaining it. Use concrete sensory details, action, and a focal point that hints at the larger situation. Avoid proper nouns until necessary. Let the reader infer place, time, and relationships from behavior. Example: a character grabbing a weapon from under a counter before a door opens \u2014 we know it's a tense situation without naming the enemy or location.\n\nAlso, I can reference the earlier waking-up clich\u00e9: if the user wants to avoid that, in medias res is a good alternative, but they worry about confusion. So I'll address that directly.\n\nI'll keep it concise, use a short example, and end with a suggestion to try rewriting the opening with one concrete sensory",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 35846,
+            "text": "We need to answer the user's follow-up question: \"How do I balance dialogue and interiority in that kind of opening?\" The user is referring to an opening that is in medias res (after the previous discussion about avoiding waking-up clich\u00e9 and using in medias res without confusing names/places). So the \"that kind of opening\" means an in medias res opening, likely with action/sensory detail. The user wants to know how to balance dialogue and interiority (character's thoughts/feelings) in such an opening.\n\nWe need to give concrete craft advice. Since the user is a fiction writer, we should provide a principle and an example. The key is that in an in medias res opening, the reader is dropped into a moment of high stakes or tension. Dialogue can provide immediate context and character, but too much interiority can slow the momentum. The balance: use dialogue to externalize conflict and reveal character through speech, while interiority should be brief, visceral, and directly tied to the physical action. Avoid long internal monologues. Instead, use interiority as brief bursts of sensation or realization that heighten the stakes, not explain backstory.\n\nI can suggest a ratio: let dialogue drive the scene, and use interiority as",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-tcp",
+    "bucket_counts_after_each_user": [
+      9,
+      23,
+      39,
+      55,
+      69
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 35761,
+      "turn1_min_ms": 15883,
+      "turn1_max_ms": 42786,
+      "later_median_ms": 30418,
+      "later_min_ms": 23520,
+      "later_max_ms": 35846,
+      "intra_user_speedup": 1.18
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": []
+  },
+  {
+    "mode": "daemon-http",
+    "restart_between_users": false,
+    "users": [
+      {
+        "name": "alice",
+        "topic": "python",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 15452,
+            "text": "We need to answer the user's question: \"I have a function that returns None when I expected it to return a dict \u2014 what's the most common cause?\" The user is asking about a debugging scenario: a function returns None instead of a dict. They want the most common cause. We should provide a concise, practical answer. Likely causes: forgetting to return, conditional return without else, error path returning None, mutable default arguments, etc. But the most common? Probably forgetting to return a value from the function, or returning early without returning the dict. Also, if the function is supposed to build a dict but some code path doesn't return it. We can give examples. Also mention that if the function modifies a dict in place and expects the caller to get it via return, but returns None (like dict.pop() returns a value, but many methods return None). But the user says \"function\" so it's user-defined. Common cause: the function has a branch that doesn't have a return statement, so it implicitly returns None. Also, if the function uses a variable that is assigned but the return statement is missing. Also, if the function is supposed to return a dict but instead returns the result of a function that returns None (like .",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 28853,
+            "text": "We need to answer the user's follow-up: \"Once I fix that, what's the cleanest way to add type hints so this mistake gets caught before runtime?\" The user wants to prevent the mistake of returning None when a dict is expected by using type hints. The cleanest way: use a return type annotation like `-> dict` or `-> Dict[str, Any]`. But also, if there's a possibility of returning None, you can use `Optional[dict]` or `dict | None` (Python 3.10+). However, the user wants to catch the mistake before runtime, so they want static type checking to catch the case where the function returns None but the annotation says dict. So they should annotate the function with the correct return type. If the function should always return a dict, use `-> dict`. If it might return None, use `-> dict | None`. But the user wants to prevent the mistake, so they probably want to enforce that it never returns None. So annotate with `-> dict`. Then use a static type checker (like mypy) to catch any code paths that return None without the type annotation covering it. However, the user might want the type hint to be the cleanest way",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 31688,
+            "text": "We need to answer the user's question: \"And how would I write a single pytest test that exercises both the success and the failure paths?\" The user is asking about writing a pytest test that covers both the success and failure paths of a function. They want a single test (likely a single test function) that exercises both paths. But they might mean a test that covers both the case where the function returns a dict (success) and the case where it returns None (failure) \u2014 but they said \"once I fix that\", so they fixed the bug, now they want to prevent it. They want to test that the function returns a dict and doesn't return None. Or they want to test that the function behaves correctly under different inputs. The phrasing \"both the success and the failure paths\" could refer to testing both when the function succeeds (returns a dict) and when it fails (returns None) \u2014 but if they fixed the bug, the failure path should no longer exist. So maybe they want to test that the function returns a dict for valid inputs and raises an exception or handles invalid inputs appropriately. Or they want to test that the function returns a dict for success and None for failure? But they said they fixed the bug, so maybe the failure path is",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "bob",
+        "topic": "recipe",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 36633,
+            "text": "We need to suggest a 30-minute recipe using chicken thighs, onion, and coconut milk. Likely a Thai-style curry or a braise. Let's think: chicken thighs, onion, coconut milk. Could do a quick coconut braised chicken with onions. Also can add common pantry ingredients like garlic, ginger, spices (curry powder, cumin, etc.), maybe fish sauce or soy sauce. But keep it simple. Mention substitutions: if no curry powder, use cumin+garam masala or just salt/pepper. If no fish sauce, use soy sauce or omit. Also note dietary constraints? User didn't mention any, so assume no restrictions. Provide storage/reheat advice. Side dish suggestion: rice or naan. Cuisine: Thai-inspired. Let's write a recipe: Coconut Braised Chicken Thighs with Caramelized Onions. Method: sear chicken, cook onions, add coconut milk, simmer. Under 30 min if using boneless thighs. Provide ingredient list with approx measurements (4 thighs, 1 onion, 1 can coconut milk, oil, salt, pepper, optional garlic/ginger/curry powder). Steps: 1. Pat chicken dry, season. 2. Heat oil, sear",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 27041,
+            "text": "Absolutely! We can pivot that beautifully into a **creamy tomato chicken braise** \u2014 think of it as a cross between a quick stroganoff",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 24865,
+            "text": "We need to recommend a starch that can be cooked in about 30 minutes to go with the chicken dish. Options: rice (white rice takes ~20 min, brown rice ~45 min), pasta (10-15 min), couscous (5 min), egg noodles (10 min), quinoa (15 min), or bread. Since we need to match the 30-minute timeframe, white rice, couscous, or quick-cooking pasta are good. Also consider that the dish is saucy (creamy tomato chicken with onions, chicken stock, cream, tomato paste) \u2014 so something to soak up the sauce is ideal. Recommend: **Buttered egg noodles** (cook 8-10 min, then toss with butter and parsley) or **Couscous** (5 min, can add herbs). Also **Boiled potatoes** would take longer unless small new potatoes boiled ~15-20 min, but not ideal. **Rice** is classic. Let's suggest: **Quick white rice** \u2014 basmati or jasmine, 20 min, fluff with fork. Or **Couscous** for speed. Mention that if user has rice, start it before the chicken or simultaneously. Also note that if they have a starch like bread, a crust",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "carol",
+        "topic": "travel",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 25327,
+            "text": "We need to answer: 10 days in Japan in late October. Prioritize regions. Late October is autumn, good for foliage. Typical first-timer itinerary: Tokyo, Kyoto, Osaka, maybe Hakone or Nara. But with 10 days, need to be realistic. Suggest 2-3 regions. Also need to cover logistics: visa, currency, transport, accommodation, customs, safety, underrated suggestion. User didn't specify nationality, so assume need visa info? Better ask or give general. But instructions: \"Always note visa requirements when the user mentions their nationality or asks about a region with restrictive entry rules.\" User hasn't mentioned nationality. So I'll assume they might need info; I can mention that many nationalities need visa but e.g. US, UK, many EU get visa-free for up to 90 days. I'll give general note: Check visa requirements based on passport. Also mention best season: late October is excellent for autumn colors, mild weather (15-20\u00b0C). Suggest specific regions: Tokyo (3-4 days), Kyoto (3-4 days), plus a day trip to Nara or Nikko, and maybe Hakone for Fuji view. Or consider Kanazawa? But with 10 days",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 33679,
+            "text": "We need to address the user's request: They want to skip Tokyo and Kyoto, having visited them before. They want a 10-day itinerary in late October using just the JR Pass. The JR Pass is a rail pass for unlimited travel on JR trains (including Shinkansen). It's valid for 7, 14, or 21 days. For 10 days, they could buy a 14-day pass (or 7-day if they concentrate travel). They want to use \"just the JR Pass\" \u2013 meaning they want to rely on JR trains for all major travel, possibly excluding private railways like Hankyu or Kintetsu? But JR Pass covers most major cities except some private lines. Need to suggest regions accessible by JR.\n\nPossible regions: Northern Japan (Tohoku: Sendai, Aomori, Hakodate?), Central Japan (Kanazawa, Nagoya, Takayama?), Western Japan (Hiroshima, Okayama, Fukuoka?), or Hokkaido (Sapporo, Hakodate). Late October \u2013 autumn foliage. Tohoku has great foliage. Also Kanazawa and Shirakawago? But Shirakawago is not JR accessible directly \u2013 need bus. JR Pass covers bus? No",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 40852,
+            "text": "We need to answer the user's question: \"How do I get from Kanazawa to Takayama without a car?\" This is a follow-up to the previous context where they want to skip Tokyo/Kyoto, use JR Pass. Kanazawa and Takayama are both in central Japan. The direct route: There is a direct bus (Nohi Bus / JR Bus) from Kanazawa to Takayama via Shirakawago. But the user asked \"without a car\" \u2013 they might be considering rail. There is a train route? The JR Pass does not cover the entire route because the line from Kanazawa to Takayama is not a JR line? Actually, from Kanazawa to Takayama, you can take JR from Kanazawa to Toyama, then change to the JR Takayama Main Line? But the Takayama Main Line is a JR line? Wait, the Takayama Main Line is operated by JR Central? Actually, the Takayama Main Line runs from Toyama to Takayama and beyond. It is a JR line. So you can take Shinkansen from Kanazawa to Toyama (Hokuriku Shinkansen, covered by JR Pass), then transfer to the JR Takayama Main Line limited express",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "dave",
+        "topic": "linear",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 40501,
+            "text": "We need to explain rank of a matrix intuitively, focusing on linear map interpretation. The user asks for intuitive explanation. We'll start with geometric picture: a linear map takes vectors from input space to output space. Rank is dimension of the image (set of all outputs). So it tells how many independent directions you can reach in the output space. For a matrix m\u00d7n, rank \u2264 min(m,n). If rank is maximal, the map is full rank (surjective if m\u2264n, injective if n\u2264m?). Actually injectivity requires nullity zero, which for n\u00d7m matrix with rank=n (full column rank) means injective; surjectivity requires rank=m (full row rank). But we'll keep simple: rank tells the dimension of the column space (image). Also relate to nullity via rank-nullity theorem.\n\nWe'll give concrete example: 2x2 matrix with rank 1, maps entire plane onto a line. Then 2x2 rank 2 maps onto whole plane (invertible). For 3x2 matrix, max rank 2, can map 2D input onto a 2D plane inside 3D. Rank 1 maps onto a line in 3D. So rank",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 18333,
+            "text": "We need to answer: For a 4x4 matrix with rank 2, the image is a 2-dimensional subspace of R^4. So it's a plane (2D flat) inside 4D space. Also, because rank is 2, the nullspace has dimension 4-2=2 (by rank-nullity). So the map collapses two independent directions to zero. The image is spanned by two linearly independent columns. We should also note that the map is not surjective (since 4D output not fully covered) and not injective (since nullspace nonzero). Provide intuitive explanation.\n\nWe'll give a geometric picture: Think of R^4 as 4-dimensional space; the matrix sends vectors to vectors in R^4. If rank=2, the outputs all lie on a 2-dimensional plane (like a flat sheet) inside that 4D space. So the map squeezes the whole 4D input onto that plane. Then we can also mention that the nullspace (kernel) is 2D, meaning all vectors in a certain 2D subspace get mapped to zero.\n\nWe'll keep the explanation short but clear, then offer a practice problem: maybe a 3x3 matrix with rank ",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 36620,
+            "text": "We need to answer: \"How does that connect to eigenvalues \u2014 does rank 2 imply two non-zero eigenvalues?\" The user asks about connection between rank and eigenvalues, specifically for a 4x4 matrix with rank 2. We need to clarify: rank 2 does not directly imply two non-zero eigenvalues. For a square matrix, eigenvalues are not directly tied to rank; they relate to the nullspace of (A - \u03bbI), not of A itself. However, for a diagonalizable matrix, the rank equals the number of non-zero eigenvalues, because eigenvalues on diagonal determine rank of diagonal matrix. But that's only if the matrix is diagonalizable, and even then, it's the number of non-zero eigenvalues (including multiplicities). But for non-diagonalizable matrices, rank can be less than the number of non-zero eigenvalues due to Jordan blocks. For example, a nilpotent Jordan block (eigenvalue 0) of size 2 has rank 1 but eigenvalue 0 with multiplicity 2. So rank 2 does not imply two non-zero eigenvalues; it could be that there are two non-zero eigenvalues, or one non-zero eigenvalue and the other zero eigenvalue has a certain algebraic multiplicity, etc. But there is a relation: the rank",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      },
+      {
+        "name": "eve",
+        "topic": "creative",
+        "turns": [
+          {
+            "turn": 1,
+            "elapsed_ms": 32385,
+            "text": "It's a fair question \u2014 and yes, \"waking up\" is one of the most frequently cited clich\u00e9s in opening pages, right up there with \"it was a dark and stormy night\" and starting with a dream. But it's not a rule. The clich\u00e9 comes from a pattern: many amateur openings use the waking-up moment to front-load backstory or description in a passive, low-tension way.",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 2,
+            "elapsed_ms": 40726,
+            "text": "We need to answer the user's follow-up question: \"What's a way to open in medias res without burying the reader in confusing names and places?\" The user is writing a short story that opens with a character waking up and heard that's clich\u00e9. They want practical advice for an in medias res opening that avoids confusion.\n\nWe are a fiction editor. The previous response acknowledged the clich\u00e9 but didn't fully address the user's deeper concern: how to open with action/momentum without info-dump. The user now asks specifically about in medias res and clarity.\n\nWe should give concrete craft advice. Focus on specificity: sensory details, immediate stakes, anchoring the reader through physical experience rather than named characters or locations. Suggest a technique: use a single concrete action or sensation that implies context without explaining. Example: \"The cold tile against his cheek told him everything he needed to know about where he was and what he'd done.\" That gives a sense of situation without names.\n\nAlso, note that waking up can be done effectively if it's not passive. The user might be trying to avoid clich\u00e9 by starting with action (in medias res) but worried about confusion. So we can bridge: waking up *is* a form of in med",
+            "garbage": false,
+            "garbage_reason": ""
+          },
+          {
+            "turn": 3,
+            "elapsed_ms": 36773,
+            "text": "We need to answer the user's follow-up question: \"How do I balance dialogue and interiority in that kind of opening?\" The user is writing a short story opening with a character waking up, wants to avoid clich\u00e9, and is now asking about balancing dialogue and interiority (inner thoughts) in an in medias res opening. They're seeking practical craft advice.\n\nWe are a fiction editor. The previous responses acknowledged the clich\u00e9 and gave advice on in medias res without confusion. Now the user wants more specific: how to weave dialogue and interiority together in that opening.\n\nWe need to give concrete, actionable feedback. Focus on: \n- The opening moment should have a single sensory anchor or immediate problem. \n- Dialogue can reveal character and situation without exposition, but needs to do more than one thing. \n- Interiority (thoughts, feelings, memories) should be brief and contextual, not a long flashback. \n- Balance: prioritize action and sensory over thought, then layer in interiority after the first beat of tension. \n- Example: a line of dialogue that implies the situation, then a single sentence of interiority that deepens it, then another line of dialogue that raises stakes. \n- Suggest a specific technique: use interiority",
+            "garbage": false,
+            "garbage_reason": ""
+          }
+        ]
+      }
+    ],
+    "bucket": "wombatkv-smoke-smoke-http",
+    "bucket_counts_after_each_user": [
+      11,
+      27,
+      40,
+      56,
+      71
+    ],
+    "latency_stats": {
+      "turn1_median_ms": 32385,
+      "turn1_min_ms": 15452,
+      "turn1_max_ms": 40501,
+      "later_median_ms": 32683,
+      "later_min_ms": 18333,
+      "later_max_ms": 40852,
+      "intra_user_speedup": 0.99
+    },
+    "cross_user_contamination": [],
+    "verdict": "PASS",
+    "notes": [
+      "intra-user speedup weak: 0.99\u00d7 (turn-1 median 32385ms vs later median 32683ms)"
+    ]
+  }
+]

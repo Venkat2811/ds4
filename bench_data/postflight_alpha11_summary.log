@@ -1,0 +1,45 @@
+=== STAGE A: mode_smoke ALL 6 modes (native, native-warm, embedded, daemon-shm, daemon-tcp, daemon-http) ===
+STAGE A exit=0
+  "verdict": "PASS",
+  "turn1_ms": 7808,
+  "turn2_ms": 7593,
+  "speedup": 1.03,
+  "bucket_keys": 0,
+  "verdict": "PASS",
+  "turn1_ms": 7676,
+  "turn2_ms": 1717,
+  "speedup": 4.47,
+  "bucket_keys": 0,
+  "verdict": "PASS",
+  "turn1_ms": 8333,
+  "turn2_ms": 1889,
+  "speedup": 4.41,
+  "bucket_keys": 10,
+  "verdict": "PASS",
+  "turn1_ms": 15368,
+  "turn2_ms": 1983,
+  "speedup": 7.75,
+  "bucket_keys": 16,
+  "verdict": "PASS",
+  "turn1_ms": 14834,
+  "turn2_ms": 1969,
+  "speedup": 7.53,
+  "bucket_keys": 10,
+  "verdict": "PASS",
+  "turn1_ms": 20068,
+  "turn2_ms": 1938,
+  "speedup": 10.35,
+  "bucket_keys": 10,
+
+=== STAGE B: ds4_test CONTRIBUTING.md sweep ===
+kvblock: OK
+ds4 tests: ok
+server: OK
+ds4 tests: ok
+metal-kernels: OK
+ds4 tests: ok
+tool-call-quality: OK
+ds4 tests: ok
+
+=== ALL POSTFLIGHT COMPLETE ===
+Tue May 19 15:48:39 CEST 2026

@@ -34,6 +34,7 @@ multi-trial cell-B numbers, see scripts/multi_trial_bench.py.
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,12 @@ def start_daemon(transport: str, prefix: str, logfile: Path,
         cmd = [str(DAEMON_BIN), "--http", f"127.0.0.1:{HTTP_PORT}"]
     else:
         raise ValueError(transport)
+    # MODE_SMOKE_DAEMON_EXTRA_ARGS: shlex-style extra args appended to the
+    # daemon command. Lets the harness exercise daemon flags like --tpc
+    # without forking this script.
+    extra = os.environ.get("MODE_SMOKE_DAEMON_EXTRA_ARGS", "").strip()
+    if extra:
+        cmd.extend(shlex.split(extra))
     with open(logfile, "w") as f:
         proc = subprocess.Popen(
             cmd,

@@ -64,7 +64,7 @@ def log(msg):
 def _common_wombatkv_env():
     """Shared WombatKV S3 + tuning env. Mirrors run_5mode_bench.common_wkv_env."""
     return {
-        'DS4_WMBT_KV_FINGERPRINT24': FINGERPRINT24,
+        'DS4_WOMBATKV_FINGERPRINT24': FINGERPRINT24,
         'WMBT_KV_TIMING': '1',
         'WMBT_KV_S3_ENDPOINT': S3_ENDPOINT,
         'WMBT_KV_S3_ACCESS_KEY': S3_ACCESS_KEY,

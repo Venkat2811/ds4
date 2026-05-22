@@ -16,7 +16,7 @@ LDLIBS ?= -lm -pthread
 # Optional WombatKV in-tree hooks (RFC 0005 Phase 2).
 # Set WOMBATKV=1 plus WOMBATKV_DIR=<path to wombatkv
 # checkout> to compile ds4-server against libwombatkv.dylib.
-# At runtime, set DS4_WOMBATKV_ENABLE=1 and DS4_WMBT_KV_FINGERPRINT24
+# At runtime, set DS4_WOMBATKV_ENABLE=1 and DS4_WOMBATKV_FINGERPRINT24
 # to activate. Without either gate the build/runtime is a strict no-op
 # vs the vanilla path.
 #

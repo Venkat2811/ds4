@@ -15834,6 +15834,10 @@ static DS4_MAYBE_UNUSED int payload_write_u32(FILE *fp, uint32_t v, char *err, s
  * at which point ds4_crc32c_table_init is still 0 so we re-init
  * deterministically.
  */
+#if defined(__ARM_FEATURE_CRC32)
+#include <arm_acle.h>
+#endif
+
 static uint32_t ds4_crc32c_table_[256];
 static int ds4_crc32c_table_initialized_ = 0;
 
@@ -15851,11 +15855,57 @@ static void ds4_crc32c_init_table_(void) {
 static inline uint32_t ds4_crc32c_init_state(void) { return 0xffffffffu; }
 
 static inline uint32_t ds4_crc32c_update(uint32_t state, const uint8_t *bytes, size_t n) {
+#if defined(__ARM_FEATURE_CRC32)
+    /* Hardware CRC32C path — ARMv8.1+ (Apple Silicon, AWS Graviton,
+     * Ampere). Polynomial 0x1edc6f41 (Castagnoli), bit-exact same
+     * output as the table-based fallback below. Throughput is
+     * ~10 GB/s on Apple Silicon vs ~500 MB/s for the byte-at-a-time
+     * table path. The big wins land on the WombatKV warm-restore
+     * install path, where 22-23 MB of body bytes get CRC32C-verified
+     * per restore. arm_acle.h is supplied by clang on macOS by
+     * default; `-mcpu=native` (already in our Makefile) enables the
+     * intrinsics on M3/M4. */
+    /* Process unaligned head one byte at a time until 8-byte-aligned. */
+    while (n > 0 && ((uintptr_t)bytes & 7u) != 0) {
+        state = __crc32cb(state, *bytes++);
+        n--;
+    }
+    /* 8-byte chunks: one instruction per 8 bytes. */
+    while (n >= 8) {
+        uint64_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = __crc32cd(state, v);
+        bytes += 8;
+        n -= 8;
+    }
+    /* Tail. */
+    if (n >= 4) {
+        uint32_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = __crc32cw(state, v);
+        bytes += 4;
+        n -= 4;
+    }
+    if (n >= 2) {
+        uint16_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = __crc32ch(state, v);
+        bytes += 2;
+        n -= 2;
+    }
+    if (n >= 1) {
+        state = __crc32cb(state, *bytes);
+    }
+    return state;
+#else
+    /* Software-table fallback. Same Castagnoli polynomial, same
+     * output as the hardware path; just slower (one byte per loop). */
     if (!ds4_crc32c_table_initialized_) ds4_crc32c_init_table_();
     for (size_t i = 0; i < n; i++) {
         state = ds4_crc32c_table_[(state ^ bytes[i]) & 0xffu] ^ (state >> 8);
     }
     return state;
+#endif
 }
 
 static inline uint32_t ds4_crc32c_finalize(uint32_t state) { return state ^ 0xffffffffu; }

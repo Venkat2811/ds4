@@ -94,7 +94,7 @@ What the script validates for cross-machine TCP:
    tensorpuffer commit. Wire format isn't versioned in the alpha
    breaking window; mismatched commits silently break block-prefix
    lookups.
-2. **Model fingerprint** — `DS4_WMBT_KV_FINGERPRINT24` must derive
+2. **Model fingerprint** — `DS4_WOMBATKV_FINGERPRINT24` must derive
    from the same model path on both sides, OR both sides must read
    blocks under the same explicit fingerprint. ds4 auto-derives
    from `sha1(model_path)`, so the path string itself matters.

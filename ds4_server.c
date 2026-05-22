@@ -128,7 +128,7 @@ static char *xstrdup(const char *s) {
 
 /* Initialise the WombatKV handle from env (WMBT_KV_S3_*, WMBT_KV_*).
  * Required runtime env: DS4_WOMBATKV_ENABLE=1. The 24-hex-char model
- * fingerprint can be set explicitly via DS4_WMBT_KV_FINGERPRINT24, OR
+ * fingerprint can be set explicitly via DS4_WOMBATKV_FINGERPRINT24, OR
  * auto-derived from `sha1(model_path)[:24]` when that env is unset —
  * stable per path, no extra config required.
  * If DS4_WOMBATKV_ENABLE is unset, this is a no-op and ds4 runs vanilla.
@@ -153,7 +153,13 @@ static void wmbt_kv_init_hooks(const char *model_path) {
     const int http_shortcut = (http_addr && http_addr[0]) ? 1 : 0;
     if ((!enable || !enable[0]) && !tcp_shortcut && !http_shortcut) return;
     char derived_fp[25] = {0};
-    const char *fp = getenv("DS4_WMBT_KV_FINGERPRINT24");
+    /* Renamed alpha.14+ from DS4_WMBT_KV_FINGERPRINT24 — the old name
+     * mixed DS4_ + WMBT_KV_ prefixes; the canonical pattern for ds4-side
+     * WombatKV-integration env vars is DS4_WOMBATKV_*
+     * (matches DS4_WOMBATKV_ENABLE / DS4_WOMBATKV_DAEMON_TCP /
+     * DS4_WOMBATKV_DAEMON_HTTP). Per the alpha pre-launch breaking-window
+     * memory we don't ship a back-compat alias. */
+    const char *fp = getenv("DS4_WOMBATKV_FINGERPRINT24");
     if (!fp || strlen(fp) < 24) {
         if (!model_path || !model_path[0]) {
             fprintf(stderr,
@@ -167,7 +173,7 @@ static void wmbt_kv_init_hooks(const char *model_path) {
         derived_fp[24] = '\0';
         fp = derived_fp;
         fprintf(stderr,
-                "ds4-server: DS4_WMBT_KV_FINGERPRINT24 unset; derived %s from sha1(%s)\n",
+                "ds4-server: DS4_WOMBATKV_FINGERPRINT24 unset; derived %s from sha1(%s)\n",
                 fp, model_path);
     }
     /* Align the namespace default between ds4 (C side) and WombatKV

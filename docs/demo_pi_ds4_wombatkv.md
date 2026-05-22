@@ -92,7 +92,7 @@ Everything else auto-resolves from sane defaults:
 - **Bucket** defaults to `wombatkv-cache-${USER}` if you don't set
   `WMBT_KV_BUCKET` — the bucket name is logged at startup so you can pin it.
 - **Model fingerprint** auto-derives from `sha1(model_path)[:24]` if you
-  don't set `DS4_WMBT_KV_FINGERPRINT24`.
+  don't set `DS4_WOMBATKV_FINGERPRINT24`.
 - **Local puffer directory**, **namespace**, **compression** (zstd default),
   **prefetch** (30 s default), and the block cache itself are all default-on.
 

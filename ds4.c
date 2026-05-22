@@ -15834,15 +15834,26 @@ static DS4_MAYBE_UNUSED int payload_write_u32(FILE *fp, uint32_t v, char *err, s
  * at which point ds4_crc32c_table_init is still 0 so we re-init
  * deterministically.
  */
-#if defined(__ARM_FEATURE_CRC32)
-#include <arm_acle.h>
-#elif defined(__SSE4_2__)
-#include <nmmintrin.h>
-#endif
-
+/* CRC32C primitive routing.
+ *
+ * DS4_WOMBATKV builds route through libwombatkv's wmbt_kv_crc32c_append
+ * — the substrate provides a single hardware-dispatched implementation
+ * (x86_64 SSE4.2 / ARMv8.1 / software fallback via the Rust `crc32c`
+ * crate's runtime CPU detection). This is the cross-engine primitive
+ * every WombatKV integration shares, so we don't re-implement per-arch
+ * ifdef ladders here.
+ *
+ * Pure-ds4 builds (no DS4_WOMBATKV) fall back to the local
+ * software-table impl below — no envelope-CRC verification happens in
+ * the native disk-cache path anyway, so this is a sanity fallback. */
+#ifdef DS4_WOMBATKV
+#include "wombatkv.h"
+#else
 static uint32_t ds4_crc32c_table_[256];
 static int ds4_crc32c_table_initialized_ = 0;
+#endif
 
+#ifndef DS4_WOMBATKV
 static void ds4_crc32c_init_table_(void) {
     for (uint32_t i = 0; i < 256; i++) {
         uint32_t c = i;
@@ -15853,107 +15864,41 @@ static void ds4_crc32c_init_table_(void) {
     }
     ds4_crc32c_table_initialized_ = 1;
 }
+#endif
 
-static inline uint32_t ds4_crc32c_init_state(void) { return 0xffffffffu; }
-
+/* CRC32C trio. DS4_WOMBATKV builds use libwombatkv's hardware-
+ * dispatched primitive (the `crc32c` Rust crate inside wombatkv-cabi);
+ * pure-ds4 builds use the local software-table fallback. Either way,
+ * (init_state → update* → finalize) returns the standard Castagnoli
+ * CRC32C of the byte sequence, bit-identical across the two paths.
+ *
+ * Why route through libwombatkv: every WombatKV-integrated engine
+ * needs CRC32C for the block / sidecar envelope verify (RFC 0018
+ * Phase 2 KVB1 v2 + sidecar v4). Centralising on the substrate means
+ * ds4 / vLLM / SGLang / future engines share one hardware-accelerated
+ * implementation with one runtime CPU dispatch, not N copies. */
+#ifdef DS4_WOMBATKV
+static inline uint32_t ds4_crc32c_init_state(void) { return 0u; }
 static inline uint32_t ds4_crc32c_update(uint32_t state, const uint8_t *bytes, size_t n) {
-#if defined(__ARM_FEATURE_CRC32)
-    /* Hardware CRC32C path — ARMv8.1+ (Apple Silicon, AWS Graviton,
-     * Ampere). Polynomial 0x1edc6f41 (Castagnoli), bit-exact same
-     * output as the table-based fallback below. Throughput is
-     * ~10 GB/s on Apple Silicon vs ~500 MB/s for the byte-at-a-time
-     * table path. The big wins land on the WombatKV warm-restore
-     * install path, where 22-23 MB of body bytes get CRC32C-verified
-     * per restore. arm_acle.h is supplied by clang on macOS by
-     * default; `-mcpu=native` (already in our Makefile) enables the
-     * intrinsics on M3/M4. */
-    /* Process unaligned head one byte at a time until 8-byte-aligned. */
-    while (n > 0 && ((uintptr_t)bytes & 7u) != 0) {
-        state = __crc32cb(state, *bytes++);
-        n--;
-    }
-    /* 8-byte chunks: one instruction per 8 bytes. */
-    while (n >= 8) {
-        uint64_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = __crc32cd(state, v);
-        bytes += 8;
-        n -= 8;
-    }
-    /* Tail. */
-    if (n >= 4) {
-        uint32_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = __crc32cw(state, v);
-        bytes += 4;
-        n -= 4;
-    }
-    if (n >= 2) {
-        uint16_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = __crc32ch(state, v);
-        bytes += 2;
-        n -= 2;
-    }
-    if (n >= 1) {
-        state = __crc32cb(state, *bytes);
-    }
-    return state;
-#elif defined(__SSE4_2__)
-    /* Hardware CRC32C path — x86_64 SSE4.2 (Intel Nehalem+, AMD
-     * Bulldozer+, Ryzen, EPYC). Bit-exact same output as the ARM
-     * path above and the table fallback below — same Castagnoli
-     * polynomial, just hardware-accelerated. The SSE4.2 `crc32`
-     * opcode handles 1/2/4/8-byte chunks; we process 8 bytes per
-     * instruction in the hot loop. `-march=native` in our Linux
-     * Makefile enables the intrinsics on Ryzen / EPYC / Xeon. */
-    /* Process unaligned head one byte at a time until 8-byte-aligned. */
-    while (n > 0 && ((uintptr_t)bytes & 7u) != 0) {
-        state = _mm_crc32_u8(state, *bytes++);
-        n--;
-    }
-    /* 8-byte chunks. `_mm_crc32_u64` takes/returns uint64_t — the
-     * low 32 bits hold the running CRC32C state. */
-    while (n >= 8) {
-        uint64_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = (uint32_t)_mm_crc32_u64((uint64_t)state, v);
-        bytes += 8;
-        n -= 8;
-    }
-    /* Tail. */
-    if (n >= 4) {
-        uint32_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = _mm_crc32_u32(state, v);
-        bytes += 4;
-        n -= 4;
-    }
-    if (n >= 2) {
-        uint16_t v;
-        memcpy(&v, bytes, sizeof v);
-        state = _mm_crc32_u16(state, v);
-        bytes += 2;
-        n -= 2;
-    }
-    if (n >= 1) {
-        state = _mm_crc32_u8(state, *bytes);
-    }
-    return state;
+    /* `wmbt_kv_crc32c_append` matches the streaming "fold bytes into
+     * a running CRC" contract. Init state = 0 (per the `crc32c` crate
+     * convention; differs from the table impl's 0xFFFFFFFF, but the
+     * trio (init → update* → finalize) still produces the standard
+     * finalized CRC because crc32c::crc32c_append(0, D) == crc32c(D)). */
+    return wmbt_kv_crc32c_append(state, bytes, n);
+}
+static inline uint32_t ds4_crc32c_finalize(uint32_t state) { return state; }
 #else
-    /* Software-table fallback. Same Castagnoli polynomial, same
-     * output as the hardware paths above; just slower (one byte per
-     * loop). Used on any target lacking both ARMv8.1+ CRC32 and
-     * x86 SSE4.2. */
+static inline uint32_t ds4_crc32c_init_state(void) { return 0xffffffffu; }
+static inline uint32_t ds4_crc32c_update(uint32_t state, const uint8_t *bytes, size_t n) {
     if (!ds4_crc32c_table_initialized_) ds4_crc32c_init_table_();
     for (size_t i = 0; i < n; i++) {
         state = ds4_crc32c_table_[(state ^ bytes[i]) & 0xffu] ^ (state >> 8);
     }
     return state;
-#endif
 }
-
 static inline uint32_t ds4_crc32c_finalize(uint32_t state) { return state ^ 0xffffffffu; }
+#endif
 
 /* CRC32C-tracking variants of payload_write_*. Same byte order
  * (little-endian u32), same error contract. Used by save-side

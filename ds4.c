@@ -15836,6 +15836,8 @@ static DS4_MAYBE_UNUSED int payload_write_u32(FILE *fp, uint32_t v, char *err, s
  */
 #if defined(__ARM_FEATURE_CRC32)
 #include <arm_acle.h>
+#elif defined(__SSE4_2__)
+#include <nmmintrin.h>
 #endif
 
 static uint32_t ds4_crc32c_table_[256];
@@ -15897,9 +15899,52 @@ static inline uint32_t ds4_crc32c_update(uint32_t state, const uint8_t *bytes, s
         state = __crc32cb(state, *bytes);
     }
     return state;
+#elif defined(__SSE4_2__)
+    /* Hardware CRC32C path — x86_64 SSE4.2 (Intel Nehalem+, AMD
+     * Bulldozer+, Ryzen, EPYC). Bit-exact same output as the ARM
+     * path above and the table fallback below — same Castagnoli
+     * polynomial, just hardware-accelerated. The SSE4.2 `crc32`
+     * opcode handles 1/2/4/8-byte chunks; we process 8 bytes per
+     * instruction in the hot loop. `-march=native` in our Linux
+     * Makefile enables the intrinsics on Ryzen / EPYC / Xeon. */
+    /* Process unaligned head one byte at a time until 8-byte-aligned. */
+    while (n > 0 && ((uintptr_t)bytes & 7u) != 0) {
+        state = _mm_crc32_u8(state, *bytes++);
+        n--;
+    }
+    /* 8-byte chunks. `_mm_crc32_u64` takes/returns uint64_t — the
+     * low 32 bits hold the running CRC32C state. */
+    while (n >= 8) {
+        uint64_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = (uint32_t)_mm_crc32_u64((uint64_t)state, v);
+        bytes += 8;
+        n -= 8;
+    }
+    /* Tail. */
+    if (n >= 4) {
+        uint32_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = _mm_crc32_u32(state, v);
+        bytes += 4;
+        n -= 4;
+    }
+    if (n >= 2) {
+        uint16_t v;
+        memcpy(&v, bytes, sizeof v);
+        state = _mm_crc32_u16(state, v);
+        bytes += 2;
+        n -= 2;
+    }
+    if (n >= 1) {
+        state = _mm_crc32_u8(state, *bytes);
+    }
+    return state;
 #else
     /* Software-table fallback. Same Castagnoli polynomial, same
-     * output as the hardware path; just slower (one byte per loop). */
+     * output as the hardware paths above; just slower (one byte per
+     * loop). Used on any target lacking both ARMv8.1+ CRC32 and
+     * x86 SSE4.2. */
     if (!ds4_crc32c_table_initialized_) ds4_crc32c_init_table_();
     for (size_t i = 0; i < n; i++) {
         state = ds4_crc32c_table_[(state ^ bytes[i]) & 0xffu] ^ (state >> 8);

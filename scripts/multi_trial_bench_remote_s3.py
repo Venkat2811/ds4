@@ -30,7 +30,24 @@ N_TRIALS = int(os.environ.get("N_TRIALS", "5"))
 import boto3
 import urllib.request
 
-S3_ENDPOINT = os.environ.get("REMOTE_S3_ENDPOINT", "http://192.168.2.103:9000")
+_endpoint_env = os.environ.get("REMOTE_S3_ENDPOINT", "").strip()
+if not _endpoint_env:
+    # No silent LAN-specific default — too easy to bench against the
+    # wrong endpoint without noticing. Common setups:
+    #   http://127.0.0.1:9000   — local MinIO on default port
+    #   http://127.0.0.1:9100   — local Docker MinIO host-mapped
+    #   http://127.0.0.1:9200   — local native MinIO on alt port
+    #   http://<host>:9000      — cross-host LAN deployment
+    sys.stderr.write(
+        "ERROR: REMOTE_S3_ENDPOINT not set. Set it to the S3/MinIO\n"
+        "endpoint the WombatKV puffer should write to. Common values:\n"
+        "  REMOTE_S3_ENDPOINT=http://127.0.0.1:9000  # local MinIO\n"
+        "  REMOTE_S3_ENDPOINT=http://127.0.0.1:9100  # Docker MinIO (host-mapped)\n"
+        "  REMOTE_S3_ENDPOINT=http://127.0.0.1:9200  # local native MinIO\n"
+        "  REMOTE_S3_ENDPOINT=http://<host>:9000     # cross-host LAN\n"
+    )
+    sys.exit(2)
+S3_ENDPOINT = _endpoint_env
 
 
 def wipe_minio():

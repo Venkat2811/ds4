@@ -56,6 +56,23 @@ import demo_showcase_lib as lib
 RESTART_BETWEEN_TRIALS = os.environ.get("RESTART_BETWEEN_TRIALS", "0") == "1"
 WIPE_LOCAL_BETWEEN_TRIALS = os.environ.get("WIPE_LOCAL_BETWEEN_TRIALS", "1") == "1"
 
+# Large-prefix mode — matches realistic pi-review on a real PR diff.
+#   PI_REVIEW_LARGE_PREFIX=1 prepends a ~30k-token (≈120k char) shared PR-diff
+#   context to every agent's turn-1 prompt. All 5 agents see the SAME shared
+#   diff (the "code being reviewed"), plus their own small divergent snippet
+#   (the "specific change to focus on").
+#
+#   Default fixture (1500-token system prompt + 120-token per-agent snippet)
+#   produces 110× per-agent TTFT on cross-restart wiped (bench_data/2026-05-16_*).
+#   Large fixture predicted to bump this to 300-600× per-agent — ds4 cold prefill
+#   scales linearly with prefix length; WombatKV S3 restore is bounded by network
+#   + block count. Realistic pi-review shape.
+#
+#   Requires ds4-server --ctx >= 64000 (default 100000 works). Slower wall
+#   per request (decode dominates), so use --trials 2 not 5.
+LARGE_PREFIX = os.environ.get("PI_REVIEW_LARGE_PREFIX", "0") == "1"
+LARGE_PREFIX_BYTES = int(os.environ.get("PI_REVIEW_LARGE_PREFIX_BYTES", "120000"))
+
 
 # -----------------------------------------------------------------------------
 # Scenario constants
@@ -150,6 +167,22 @@ def _load_code_snippets():
     ]
 
 
+# Optional shared PR-diff context (LARGE_PREFIX mode). Returns the SAME bytes
+# for every agent — Tier B blocks dedupe it, so the cost is paid once. Default
+# is empty (small fixture).
+def _load_shared_pr_diff():
+    if not LARGE_PREFIX:
+        return ""
+    if not lib.PROMPT_FILE.exists():
+        return ""
+    base = lib.PROMPT_FILE.read_text()
+    # Default 120k chars ≈ 30k tokens. Configurable via PI_REVIEW_LARGE_PREFIX_BYTES.
+    # Picked from offset 500k to avoid overlap with the per-agent slices above.
+    start = 500_000
+    end = min(start + LARGE_PREFIX_BYTES, len(base))
+    return base[start:end]
+
+
 # 4 fixed follow-up questions (turns 2..5). Same questions for every agent so
 # the cross-agent-share story is clean: the conversation TAIL becomes shared
 # bytes too, once an agent has run through turn N once.
@@ -162,6 +195,19 @@ FOLLOWUPS = [
 
 
 def _initial_prompt(snippet):
+    shared_diff = _load_shared_pr_diff()
+    if shared_diff:
+        # LARGE_PREFIX mode — shared ~30k-token PR diff prepended to every agent.
+        # The shared bytes hit Tier B once across all 5 agents; the small per-agent
+        # snippet is the divergent tail. Matches realistic pi-review shape.
+        return (
+            "Here is the full PR diff for context. Read it carefully.\n\n"
+            "```\n" + shared_diff + "\n```\n\n"
+            "Now focus your review on this specific change in the PR. Apply the "
+            "style guide exactly. Output ONLY the JSON object specified above, "
+            "no prose around it.\n\n"
+            "```\n" + snippet + "\n```\n"
+        )
     return (
         "Review this file. Apply the style guide exactly. Output ONLY the "
         "JSON object specified above, no prose around it.\n\n"
@@ -337,6 +383,8 @@ def run_mode(mode, outdir, trials):
         "trials": trials,
         "restart_between_trials": RESTART_BETWEEN_TRIALS,
         "wipe_local_between_trials": WIPE_LOCAL_BETWEEN_TRIALS,
+        "large_prefix": LARGE_PREFIX,
+        "large_prefix_bytes": LARGE_PREFIX_BYTES if LARGE_PREFIX else 0,
         "trial_results": all_trial_results,
         "config": {
             "ports": PORTS,

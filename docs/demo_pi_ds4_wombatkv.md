@@ -27,11 +27,11 @@ on a long shared prompt happens once across the team, not once per developer.
 
 ## Step 1 — Build WombatKV-enabled `ds4-server`
 
-From the `ds4` repo with the `tensorpuffer` workspace checked out alongside:
+From the `ds4` repo with the `wombatkv` workspace checked out alongside:
 
 ```bash
 cd /path/to/ds4
-make ds4-server WOMBATKV=1 WOMBATKV_DIR=/path/to/tensorpuffer
+make ds4-server WOMBATKV=1 WOMBATKV_DIR=/path/to/wombatkv
 ```
 
 This produces `./ds4-server` linked against the WombatKV C ABI (`wmbt_kv_*`

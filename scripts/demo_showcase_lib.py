@@ -29,7 +29,7 @@ import time
 DS4_DIR = pathlib.Path("/Users/venkat/Documents/p/venkat-github/myelon-launch/ds4")
 DS4_BIN = DS4_DIR / "ds4-server"
 
-# wombatkv-daemon binary lives in the tensorpuffer (WombatKV upstream) tree.
+# wombatkv-daemon binary lives in the wombatkv (the WombatKV upstream) tree.
 WOMBATKV_DAEMON_BIN = pathlib.Path(
     "/Users/venkat/Documents/p/venkat-github/tensorpuffer/target/release/wombatkv-daemon"
 )

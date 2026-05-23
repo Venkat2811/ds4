@@ -22,7 +22,7 @@ PROMPT_FILE=${PROMPT_FILE:-/tmp/pg1184.txt}
 PORT=${PORT:-8000}
 
 if [ ! -x "$DS4_BIN" ]; then
-  echo "FATAL: $DS4_BIN not built. Run: cd $DS4_DIR && make ds4-server WOMBATKV=1 WOMBATKV_DIR=<tensorpuffer>"
+  echo "FATAL: $DS4_BIN not built. Run: cd $DS4_DIR && make ds4-server WOMBATKV=1 WOMBATKV_DIR=<wombatkv>"
   exit 1
 fi
 

@@ -3,7 +3,7 @@
 Cross-mode validation procedures for ds4 × WombatKV. Complements
 the per-CONTRIBUTING.md correctness regression track.
 
-The five WombatKV modes documented in tensorpuffer's `docs/ENV.md`:
+The five WombatKV modes documented in wombatkv's `docs/ENV.md`:
 
 | mode | engine-side env | what's where |
 |---|---|---|
@@ -22,7 +22,7 @@ modes. Single-trial; fast.
 
 ```bash
 # Pre-req: native MinIO running on 127.0.0.1:9200
-#          libwombatkv.dylib + wombatkv-daemon built in tensorpuffer
+#          libwombatkv.dylib + wombatkv-daemon built in wombatkv
 
 python3 scripts/mode_smoke.py all          # runs all 4 same-host modes
 python3 scripts/mode_smoke.py embedded     # one mode at a time
@@ -44,11 +44,11 @@ another. Tests the wire format + remote S3 ownership end-to-end.
 
 ```bash
 # Pre-req: native MinIO reachable from this host (local or remote)
-# Build wombatkv-daemon from the same tensorpuffer commit as the
+# Build wombatkv-daemon from the same wombatkv commit as the
 # libwombatkv.dylib on the engine side. Mismatched commits = wire
 # format drift = block-prefix lookup misses.
 
-cd /path/to/tensorpuffer
+cd /path/to/wombatkv
 cargo build --release -p wombatkv-daemon
 
 WMBT_KV_S3_ENDPOINT=http://127.0.0.1:9000 \
@@ -72,7 +72,7 @@ Firewall: allow inbound TCP 7878 from the Mac's IP.
 cd /path/to/ds4
 
 # Build ds4-server with the WombatKV dylib (one-time):
-make WOMBATKV=1 WOMBATKV_DIR=/path/to/tensorpuffer ds4-server
+make WOMBATKV=1 WOMBATKV_DIR=/path/to/wombatkv ds4-server
 
 # Run the smoke pointed at the remote daemon:
 python3 scripts/mode_smoke.py daemon-tcp-remote \
@@ -91,7 +91,7 @@ What the script validates for cross-machine TCP:
 ### Important compatibility checks
 
 1. **dylib commit ↔ daemon commit** — both must be from the same
-   tensorpuffer commit. Wire format isn't versioned in the alpha
+   wombatkv commit. Wire format isn't versioned in the alpha
    breaking window; mismatched commits silently break block-prefix
    lookups.
 2. **Model fingerprint** — `DS4_WOMBATKV_FINGERPRINT24` must derive

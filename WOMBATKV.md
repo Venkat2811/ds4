@@ -1,7 +1,7 @@
 # WombatKV integration in this ds4 fork
 
 This `ds4` repo is a fork of [antirez/ds4](https://github.com/antirez/ds4) with
-opt-in [WombatKV](https://github.com/Venkat2811/tensorpuffer) integration:
+opt-in [WombatKV](https://github.com/Venkat2811/wombatkv) integration:
 cross-process, cross-machine prefix-share KV restore that survives
 ds4-server restarts.
 
@@ -33,17 +33,17 @@ procedures.
 ### 1. Build (one-time)
 
 You need a checkout of the
-[`tensorpuffer`](https://github.com/Venkat2811/tensorpuffer) workspace
+[`wombatkv`](https://github.com/Venkat2811/wombatkv) workspace
 alongside this repo.
 
 ```sh
 # Build the WombatKV substrate's C ABI cdylib + daemon
-cd /path/to/tensorpuffer
+cd /path/to/wombatkv
 cargo build --release -p wombatkv-cabi -p wombatkv-daemon
 
 # Build ds4-server with the WombatKV path enabled
 cd /path/to/ds4
-make ds4-server WOMBATKV=1 WOMBATKV_DIR=/path/to/tensorpuffer
+make ds4-server WOMBATKV=1 WOMBATKV_DIR=/path/to/wombatkv
 ```
 
 The Makefile adds `-DDS4_WOMBATKV` to the C compile + links
@@ -94,7 +94,7 @@ WombatKV instead of cold-prefilling.
 | `DS4_WOMBATKV_FINGERPRINT24` | 24-hex model fingerprint (key derivation factor) | derived from `sha1(model_path)[:24]` |
 
 All other env vars (S3, namespace, cache sizing, eviction, prefetch, etc.)
-are tensorpuffer-side and use the `WMBT_KV_*` prefix. See tensorpuffer's
+are wombatkv-side and use the `WMBT_KV_*` prefix. See wombatkv's
 `docs/ENV.md` for the full inventory.
 
 ## Architecture: where the integration lives
@@ -139,7 +139,7 @@ breaking changes follow standard semver.
 ## Reporting issues
 
 WombatKV-integration issues: open against
-[Venkat2811/tensorpuffer](https://github.com/Venkat2811/tensorpuffer/issues)
+[Venkat2811/wombatkv](https://github.com/Venkat2811/wombatkv/issues)
 (the substrate) or this repo (the ds4-side integration).
 
 Upstream antirez/ds4 issues unrelated to WombatKV: open against

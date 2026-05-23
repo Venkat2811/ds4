@@ -45,8 +45,8 @@ from pathlib import Path
 DS4_DIR = Path(__file__).resolve().parent.parent
 DS4_BIN = DS4_DIR / "ds4-server"
 MODEL = "gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf"
-TENSORPUFFER_DIR = Path("/Users/venkat/Documents/p/venkat-github/tensorpuffer")
-DAEMON_BIN = TENSORPUFFER_DIR / "target" / "release" / "wombatkv-daemon"
+WOMBATKV_DIR = Path("/Users/venkat/Documents/p/venkat-github/tensorpuffer")
+DAEMON_BIN = WOMBATKV_DIR / "target" / "release" / "wombatkv-daemon"
 
 S3_ENDPOINT = "http://127.0.0.1:9200"
 S3_KEY = "minioadmin"

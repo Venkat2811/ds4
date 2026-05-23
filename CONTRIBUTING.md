@@ -168,7 +168,7 @@ Five Python harnesses cover the ds4 × WombatKV substrate × five
 transports (native, embedded, daemon-shm, daemon-tcp, daemon-http):
 
 Pre-req for non-native modes: native MinIO on `127.0.0.1:9200` +
-`libwombatkv.dylib` and `wombatkv-daemon` built in tensorpuffer (see
+`libwombatkv.dylib` and `wombatkv-daemon` built in wombatkv (see
 docs/MODE_VALIDATION.md for the env setup).
 
 ```sh
@@ -198,13 +198,13 @@ python3 scripts/scenarios/multi_user_multiturn.py --mode all \
     --restart-between-users
 ```
 
-### tensorpuffer-side test runs (Rust)
+### wombatkv-side test runs (Rust)
 
 Tier-A byte-roundtrip + envelope corruption rejection + transport-
 layer negative-path + DST schedule determinism (fast, sandbox-safe):
 
 ```sh
-cd <tensorpuffer>
+cd <wombatkv>
 # All lib tests across the workspace (~50s, currently 236 tests at
 # alpha.11+1: 226 from alpha.11 + 10 envelope-corruption tests):
 cargo test --workspace --lib --release
@@ -230,8 +230,8 @@ What each harness proves:
 | `coherence_test.py` | text | N repeated cold/warm cycles produce reasonable English (no garbage); pairwise LCP / shared-words within native noise floor |
 | `logit_fidelity_test.py` | tensor (logits) | L∞ logit drift cold-vs-warm matches ds4's huge-blob native-warm baseline (≤ 0.05), `wombatkv_loaded_tokens` confirms restore engaged, top-1 token preserved |
 | `multi_user_multiturn.py` | text + concurrency | 5 distinct users with separate histories all produce coherent output; cross-user contamination check; intra-user turn-(2..N) warm-restore wins |
-| `cargo test --lib` (tensorpuffer) | bytes + wire | Tier-A adversarial-payload byte roundtrip + envelope encode/decode + transport-layer corruption rejection (TCP + HTTP) |
-| `dst-sweep.sh` (tensorpuffer) | DST | 50 seeds × 10 fault classes → 500 deterministic fault plans, all generate cleanly |
+| `cargo test --lib` (wombatkv) | bytes + wire | Tier-A adversarial-payload byte roundtrip + envelope encode/decode + transport-layer corruption rejection (TCP + HTTP) |
+| `dst-sweep.sh` (wombatkv) | DST | 50 seeds × 10 fault classes → 500 deterministic fault plans, all generate cleanly |
 | `ds4_test --kvblock` | C-side bytes | sidecar v4 + block v2 round-trip AND corruption rejection (alpha.11+ adds CRC32C gating tests) |
 
 If you only have time for one, `mode_smoke.py all` is the right

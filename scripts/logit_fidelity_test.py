@@ -42,9 +42,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 import mode_smoke as ms  # noqa: E402
 
-DEFAULT_PROMPT = (
-    "The capital of France is"  # short, very-low-entropy continuation
-)
+DEFAULT_PROMPT = "The capital of France is"  # short, very-low-entropy continuation
 DEFAULT_TOP_K = 20
 DEFAULT_ITERS = 3
 
@@ -65,16 +63,18 @@ def _trigger_chat_completion(prompt: str, max_tokens: int = 4) -> int:
     engage ds4's KV-disk huge-blob save (which lives in the chat-
     completion handler, not in /v1/internal/logits). For WombatKV
     modes the logits endpoint handles its own load+save inline."""
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "system", "content": "You are a literary assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 0.0,
-        "stream": False,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "You are a literary assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "stream": False,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{ms.PORT}/v1/chat/completions",
         data=payload,
@@ -86,26 +86,38 @@ def _trigger_chat_completion(prompt: str, max_tokens: int = 4) -> int:
     return int((time.time() - t0) * 1000)
 
 
-def _start_server_with_debug(mode: str, kvdir: Path, puffer: Path,
-                             serverlog: Path) -> "subprocess.Popen":
+def _start_server_with_debug(
+    mode: str, kvdir: Path, puffer: Path, serverlog: Path
+) -> "subprocess.Popen":
     """Like mode_smoke.start_server but adds DS4_DEBUG_INTERNAL=1."""
     import subprocess
+
     env = ms.server_env(mode, kvdir, puffer)
     env["DS4_DEBUG_INTERNAL"] = "1"
     cmd = [
         str(ms.DS4_BIN),
-        "--model", ms.MODEL,
-        "--ctx", "4096",
-        "--kv-disk-dir", str(kvdir),
-        "--kv-cache-min-tokens", "256",
-        "--kv-disk-space-mb", "4096",
-        "--port", str(ms.PORT),
+        "--model",
+        ms.MODEL,
+        "--ctx",
+        "4096",
+        "--kv-disk-dir",
+        str(kvdir),
+        "--kv-cache-min-tokens",
+        "256",
+        "--kv-disk-space-mb",
+        "4096",
+        "--port",
+        str(ms.PORT),
     ]
     with open(serverlog, "w") as f:
         proc = subprocess.Popen(
-            cmd, cwd=str(ms.DS4_DIR), env=env,
-            stdout=f, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, start_new_session=True,
+            cmd,
+            cwd=str(ms.DS4_DIR),
+            env=env,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
     for _ in range(120):
         try:
@@ -137,7 +149,7 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
     # in lifecycle (no kvdir wipe + tiny chat-completion to engage
     # ds4's huge-blob KV-disk save).
     server_mode = "native" if mode == "native-warm" else mode
-    keep_kvdir_between_iters = (mode == "native-warm")
+    keep_kvdir_between_iters = mode == "native-warm"
     kvdir = Path(f"/tmp/logit-kvdir-{mode}")
     puffer = Path(f"/tmp/logit-puffer-{mode}")
     daemon_puffer = Path(f"/tmp/logit-daemonpuffer-{mode}")
@@ -172,7 +184,9 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
             daemon_proc = ms.start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif mode == "daemon-http":
             ms.log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{ms.HTTP_PORT})")
-            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
+            daemon_proc = ms.start_daemon(
+                "http", "smoke-http", daemonlog, daemon_puffer
+            )
 
         for it in range(1, iters + 1):
             ms.log(f"  iter {it}: starting ds4-server (DS4_DEBUG_INTERNAL=1)")
@@ -193,22 +207,26 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
                 # on iter-1; iter-2 will hit the prompt-hash and warm-
                 # restore the entire blob.
                 _trigger_chat_completion(prompt, max_tokens=4)
-            ms.log(f"  iter {it}: requesting top-K logits (endpoint drives load + sync + save)")
+            ms.log(
+                f"  iter {it}: requesting top-K logits (endpoint drives load + sync + save)"
+            )
             t0 = time.time()
             resp = post_logits(prompt, top_k)
             elapsed = time.time() - t0
             ms.log(
-                f"    iter {it}: elapsed={elapsed*1000:.0f} ms, "
+                f"    iter {it}: elapsed={elapsed * 1000:.0f} ms, "
                 f"prompt_tokens={resp.get('prompt_tokens')}, "
                 f"sample_position={resp.get('sample_position')}, "
                 f"wombatkv_loaded_tokens={resp.get('wombatkv_loaded_tokens')}, "
                 f"top1=token_id={resp['top_k'][0]['token_id']} logit={resp['top_k'][0]['logit']:.4f}"
             )
-            records.append({
-                "iter": it,
-                "logits_ms": int(elapsed * 1000),
-                "logits": resp,
-            })
+            records.append(
+                {
+                    "iter": it,
+                    "logits_ms": int(elapsed * 1000),
+                    "logits": resp,
+                }
+            )
             ms.kill_all_ds4()
             if not keep_kvdir_between_iters and kvdir.exists():
                 shutil.rmtree(kvdir)
@@ -217,7 +235,9 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
         # (non-native modes only)
         if mode == "embedded":
             bk = len(ms.list_bucket_keys("wombatkv-smoke-embedded"))
-            ms.log(f"  [post-run] embedded bucket: {bk} objects (>0 expected for WombatKV save)")
+            ms.log(
+                f"  [post-run] embedded bucket: {bk} objects (>0 expected for WombatKV save)"
+            )
         elif mode == "daemon-shm":
             bk = len(ms.list_bucket_keys("wombatkv-smoke-smoke-shm"))
             ms.log(f"  [post-run] daemon-shm bucket: {bk} objects (>0 expected)")
@@ -242,10 +262,10 @@ def _capture_iters(mode: str, prompt: str, top_k: int, iters: int) -> list[dict]
 
 def _diff_top_k(a: dict, b: dict) -> dict:
     """Compare two top-K dicts. Returns:
-      top1_match:    bool — top-1 token IDs identical
-      top1_in_top3_other: bool — a's top-1 token id is in b's top-3 (and vice versa)
-      common_ids:    int — number of token IDs in both top-Ks
-      l_inf_overlap: float — max abs(logit_a - logit_b) over token_ids in both
+    top1_match:    bool — top-1 token IDs identical
+    top1_in_top3_other: bool — a's top-1 token id is in b's top-3 (and vice versa)
+    common_ids:    int — number of token IDs in both top-Ks
+    l_inf_overlap: float — max abs(logit_a - logit_b) over token_ids in both
     """
     a_ids = [t["token_id"] for t in a["top_k"]]
     b_ids = [t["token_id"] for t in b["top_k"]]
@@ -354,7 +374,14 @@ def main() -> int:
     p.add_argument(
         "modes",
         nargs="*",
-        default=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"],
+        default=[
+            "native",
+            "native-warm",
+            "embedded",
+            "daemon-shm",
+            "daemon-tcp",
+            "daemon-http",
+        ],
     )
     p.add_argument("--iters", type=int, default=DEFAULT_ITERS)
     p.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
@@ -363,13 +390,17 @@ def main() -> int:
     args = p.parse_args()
 
     if not ms.DS4_BIN.exists():
-        print(f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr)
+        print(
+            f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr
+        )
         return 2
 
     all_records: dict[str, list[dict]] = {}
     for mode in args.modes:
         try:
-            all_records[mode] = _capture_iters(mode, args.prompt, args.top_k, args.iters)
+            all_records[mode] = _capture_iters(
+                mode, args.prompt, args.top_k, args.iters
+            )
         except Exception as exc:
             ms.log(f"  EXCEPTION: {type(exc).__name__}: {exc}")
             all_records[mode] = []
@@ -384,8 +415,10 @@ def main() -> int:
             top1 = r["logits"]["top_k"][0]
             chat_ms = r.get("chat_ms", "?")
             logits_ms = r.get("logits_ms", r.get("elapsed_ms", "?"))
-            print(f"  iter {r['iter']}: top1={top1['token_id']} logit={top1['logit']:.4f} "
-                  f"chat={chat_ms}ms logits={logits_ms}ms")
+            print(
+                f"  iter {r['iter']}: top1={top1['token_id']} logit={top1['logit']:.4f} "
+                f"chat={chat_ms}ms logits={logits_ms}ms"
+            )
 
     print()
     print("=== pairwise diffs ===")
@@ -406,12 +439,18 @@ def main() -> int:
         print(f"    {v['reason']}")
 
     if args.output:
-        args.output.write_text(json.dumps({"records": all_records, "summary": summary}, indent=2, default=str))
+        args.output.write_text(
+            json.dumps(
+                {"records": all_records, "summary": summary}, indent=2, default=str
+            )
+        )
         print(f"\n[written to {args.output}]")
 
-    rc = 0 if all(
-        v["verdict"].startswith("PASS") for v in summary["verdicts"].values()
-    ) else 1
+    rc = (
+        0
+        if all(v["verdict"].startswith("PASS") for v in summary["verdicts"].values())
+        else 1
+    )
     return rc
 
 

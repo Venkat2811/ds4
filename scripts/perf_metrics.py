@@ -111,7 +111,9 @@ def measure_streaming(port: int) -> dict:
     decode_ms = max(e2e_ms - ttft_ms, 0.0)
     tpot_ms = (decode_ms / completion_tokens) if completion_tokens > 0 else 0.0
     prompt_throughput = (
-        (prompt_tokens / (ttft_ms / 1000.0)) if (ttft_ms > 0 and prompt_tokens > 0) else 0.0
+        (prompt_tokens / (ttft_ms / 1000.0))
+        if (ttft_ms > 0 and prompt_tokens > 0)
+        else 0.0
     )
     output_throughput = (
         (completion_tokens / (decode_ms / 1000.0))
@@ -169,7 +171,9 @@ def run_mode(mode: str) -> dict:
         elif mode == "daemon-tcp":
             daemon_proc = ms.start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif mode == "daemon-http":
-            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
+            daemon_proc = ms.start_daemon(
+                "http", "smoke-http", daemonlog, daemon_puffer
+            )
 
         ms.start_server(mode, kvdir, puffer, serverlog)
 

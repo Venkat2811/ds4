@@ -103,7 +103,9 @@ def _load_prompt() -> str:
     if _PROMPT_FILE.exists():
         head = _PROMPT_FILE.read_text(encoding="utf-8", errors="ignore")[:_PROMPT_CHARS]
     else:
-        head = ("The Count of Monte Cristo is a novel by Alexandre Dumas. " * 200)[:_PROMPT_CHARS]
+        head = ("The Count of Monte Cristo is a novel by Alexandre Dumas. " * 200)[
+            :_PROMPT_CHARS
+        ]
     return f"Here is a passage:\n\n{head}\n\nSummarize the key themes in 30 words."
 
 
@@ -118,7 +120,9 @@ def wipe_bucket(bucket: str) -> None:
     try:
         import boto3
     except ImportError:
-        log("  (boto3 not installed; skipping bucket wipe — mode smoke can still proceed)")
+        log(
+            "  (boto3 not installed; skipping bucket wipe — mode smoke can still proceed)"
+        )
         return
     s3 = boto3.client(
         "s3",
@@ -164,7 +168,12 @@ def list_bucket_keys(bucket: str) -> list[str]:
 def kill_all_ds4() -> None:
     subprocess.run(["pkill", "-f", "ds4-server"], capture_output=True)
     for _ in range(40):
-        if subprocess.run(["pgrep", "-f", "ds4-server"], capture_output=True).returncode != 0:
+        if (
+            subprocess.run(
+                ["pgrep", "-f", "ds4-server"], capture_output=True
+            ).returncode
+            != 0
+        ):
             time.sleep(0.5)
             return
         time.sleep(0.2)
@@ -175,7 +184,12 @@ def kill_all_ds4() -> None:
 def kill_all_daemon() -> None:
     subprocess.run(["pkill", "-f", "wombatkv-daemon"], capture_output=True)
     for _ in range(20):
-        if subprocess.run(["pgrep", "-f", "wombatkv-daemon"], capture_output=True).returncode != 0:
+        if (
+            subprocess.run(
+                ["pgrep", "-f", "wombatkv-daemon"], capture_output=True
+            ).returncode
+            != 0
+        ):
             time.sleep(0.3)
             return
         time.sleep(0.2)
@@ -183,8 +197,9 @@ def kill_all_daemon() -> None:
     time.sleep(1)
 
 
-def start_daemon(transport: str, prefix: str, logfile: Path,
-                 daemon_puffer: Path) -> subprocess.Popen:
+def start_daemon(
+    transport: str, prefix: str, logfile: Path, daemon_puffer: Path
+) -> subprocess.Popen:
     """transport in {'shm','tcp'}. daemon_puffer must already exist
     (wiped + re-created by the caller) so we know there's no stale
     foyer/SlateDB state from prior runs masquerading as a warm cache."""
@@ -231,7 +246,11 @@ def start_daemon(transport: str, prefix: str, logfile: Path,
             text = logfile.read_text()
         except FileNotFoundError:
             text = ""
-        if "ready" in text.lower() or "listening" in text.lower() or "serving" in text.lower():
+        if (
+            "ready" in text.lower()
+            or "listening" in text.lower()
+            or "serving" in text.lower()
+        ):
             time.sleep(0.3)
             return proc
         if proc.poll() is not None:
@@ -298,16 +317,24 @@ def server_env(mode: str, kvdir: Path, puffer: Path) -> dict[str, str]:
     return env
 
 
-def start_server(mode: str, kvdir: Path, puffer: Path, logfile: Path) -> subprocess.Popen:
+def start_server(
+    mode: str, kvdir: Path, puffer: Path, logfile: Path
+) -> subprocess.Popen:
     env = server_env(mode, kvdir, puffer)
     cmd = [
         str(DS4_BIN),
-        "--model", MODEL,
-        "--ctx", "8192",
-        "--kv-disk-dir", str(kvdir),
-        "--kv-cache-min-tokens", "256",
-        "--kv-disk-space-mb", "4096",
-        "--port", str(PORT),
+        "--model",
+        MODEL,
+        "--ctx",
+        "8192",
+        "--kv-disk-dir",
+        str(kvdir),
+        "--kv-cache-min-tokens",
+        "256",
+        "--kv-disk-space-mb",
+        "4096",
+        "--port",
+        str(PORT),
     ]
     with open(logfile, "w") as f:
         proc = subprocess.Popen(
@@ -379,7 +406,7 @@ def run_mode(mode: str) -> dict:
     # in NOT wiping kvdir between turns (so ds4's huge-blob save from
     # turn-1 is available for turn-2 to warm-restore).
     server_mode = "native" if mode == "native-warm" else mode
-    keep_kvdir_between_turns = (mode == "native-warm")
+    keep_kvdir_between_turns = mode == "native-warm"
     kvdir = Path(f"/tmp/mode-smoke-kvdir-{mode}")
     puffer = Path(f"/tmp/mode-smoke-puffer-{mode}")
     daemon_puffer = Path(f"/tmp/mode-smoke-daemonpuffer-{mode}")
@@ -435,7 +462,7 @@ def run_mode(mode: str) -> dict:
 
         log("  turn 1 (cold prefill)")
         t1, text1 = send_turn(PROMPT_TEXT)
-        log(f"    turn-1 elapsed = {t1*1000:.0f} ms, first 40 chars: {text1[:40]!r}")
+        log(f"    turn-1 elapsed = {t1 * 1000:.0f} ms, first 40 chars: {text1[:40]!r}")
 
         # native-warm keeps kvdir so turn-2 hits ds4's huge-blob warm
         # restore. All other modes wipe kvdir (WombatKV state persists
@@ -450,7 +477,7 @@ def run_mode(mode: str) -> dict:
 
         log("  turn 2 (warm restore for wombatkv modes)")
         t2, text2 = send_turn(PROMPT_TEXT)
-        log(f"    turn-2 elapsed = {t2*1000:.0f} ms, first 40 chars: {text2[:40]!r}")
+        log(f"    turn-2 elapsed = {t2 * 1000:.0f} ms, first 40 chars: {text2[:40]!r}")
 
         # Bucket signal
         bucket = None
@@ -472,7 +499,11 @@ def run_mode(mode: str) -> dict:
         # Server log signal: did WombatKV engage?
         srv_text = serverlog.read_text() if serverlog.exists() else ""
         wombat_init_line = next(
-            (ln for ln in srv_text.splitlines() if "WombatKV" in ln or "wombatkv" in ln.lower()),
+            (
+                ln
+                for ln in srv_text.splitlines()
+                if "WombatKV" in ln or "wombatkv" in ln.lower()
+            ),
             "",
         )
         if wombat_init_line:
@@ -501,11 +532,16 @@ def run_mode(mode: str) -> dict:
             verdict = "FAIL"
             notes.append("empty response")
         if server_mode != "native":
-            if not bucket_keys and server_mode not in ("daemon-tcp-remote", "daemon-http-remote"):
+            if not bucket_keys and server_mode not in (
+                "daemon-tcp-remote",
+                "daemon-http-remote",
+            ):
                 notes.append("bucket empty (WombatKV did not write any blocks)")
                 # don't fail on this alone — short prompt may not trigger block write
             if t2 > t1 * 0.9:
-                notes.append(f"turn-2 not faster than turn-1 ({t2*1000:.0f} vs {t1*1000:.0f} ms) — warm restore may not have engaged")
+                notes.append(
+                    f"turn-2 not faster than turn-1 ({t2 * 1000:.0f} vs {t1 * 1000:.0f} ms) — warm restore may not have engaged"
+                )
             # Coherence soft check (don't FAIL on it — log + note for review)
             if coh["shared_words"] < 3:
                 notes.append(
@@ -542,44 +578,65 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
         "mode",
-        choices=["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-tcp-remote", "daemon-http", "daemon-http-remote", "all"],
+        choices=[
+            "native",
+            "native-warm",
+            "embedded",
+            "daemon-shm",
+            "daemon-tcp",
+            "daemon-tcp-remote",
+            "daemon-http",
+            "daemon-http-remote",
+            "all",
+        ],
     )
     p.add_argument(
         "--remote-http",
         metavar="HOST:PORT",
         default=os.environ.get("MODE_SMOKE_REMOTE_HTTP", ""),
         help="For mode daemon-http-remote: address of an already-running "
-             "wombatkv-daemon HTTP listener on another host (e.g. 192.168.x.x:7879).",
+        "wombatkv-daemon HTTP listener on another host (e.g. 192.168.x.x:7879).",
     )
     p.add_argument(
         "--remote-tcp",
         metavar="HOST:PORT",
         default=os.environ.get("MODE_SMOKE_REMOTE_TCP", ""),
         help="For mode daemon-tcp-remote: address of an already-running "
-             "wombatkv-daemon on another host (e.g. 192.168.x.x:7878). "
-             "The daemon is the user's responsibility; this script only "
-             "starts the local ds4-server pointed at it.",
+        "wombatkv-daemon on another host (e.g. 192.168.x.x:7878). "
+        "The daemon is the user's responsibility; this script only "
+        "starts the local ds4-server pointed at it.",
     )
     args = p.parse_args()
 
     if not DS4_BIN.exists():
         log(f"ERROR: {DS4_BIN} does not exist — build ds4-server first")
         return 1
-    if args.mode in ("daemon-shm", "daemon-tcp", "daemon-http", "all") and not DAEMON_BIN.exists():
+    if (
+        args.mode in ("daemon-shm", "daemon-tcp", "daemon-http", "all")
+        and not DAEMON_BIN.exists()
+    ):
         log(f"ERROR: {DAEMON_BIN} does not exist — build wombatkv-daemon first")
         return 1
     if args.mode == "daemon-tcp-remote":
         if not args.remote_tcp:
-            log("ERROR: daemon-tcp-remote requires --remote-tcp HOST:PORT (or MODE_SMOKE_REMOTE_TCP env)")
+            log(
+                "ERROR: daemon-tcp-remote requires --remote-tcp HOST:PORT (or MODE_SMOKE_REMOTE_TCP env)"
+            )
             return 1
         REMOTE_TCP_ADDR = args.remote_tcp
     if args.mode == "daemon-http-remote":
         if not args.remote_http:
-            log("ERROR: daemon-http-remote requires --remote-http HOST:PORT (or MODE_SMOKE_REMOTE_HTTP env)")
+            log(
+                "ERROR: daemon-http-remote requires --remote-http HOST:PORT (or MODE_SMOKE_REMOTE_HTTP env)"
+            )
             return 1
         REMOTE_HTTP_ADDR = args.remote_http
 
-    modes = ["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"] if args.mode == "all" else [args.mode]
+    modes = (
+        ["native", "native-warm", "embedded", "daemon-shm", "daemon-tcp", "daemon-http"]
+        if args.mode == "all"
+        else [args.mode]
+    )
     results = []
     for m in modes:
         try:

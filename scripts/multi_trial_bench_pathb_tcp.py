@@ -31,15 +31,20 @@ S3_ENDPOINT = os.environ.get("REMOTE_S3_ENDPOINT", "http://192.168.2.103:9000")
 import boto3
 import urllib.request
 
+
 def wipe_minio():
     """Wipe the wombatkv-demo-{native,wombatkv} buckets via boto3.
     Path B daemon owns the bucket, but for cell-B parity we still want a
     fresh S3 state per trial so turn-1 is a true cold prefill."""
     from botocore.client import Config
+
     s3 = boto3.client(
-        "s3", endpoint_url=S3_ENDPOINT,
-        aws_access_key_id="minioadmin", aws_secret_access_key="minioadmin",
-        config=Config(signature_version="s3v4"), region_name="us-east-1",
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id="minioadmin",
+        aws_secret_access_key="minioadmin",
+        config=Config(signature_version="s3v4"),
+        region_name="us-east-1",
     )
     for bucket in ("wombatkv-demo-native", "wombatkv-demo-wombatkv"):
         try:
@@ -249,21 +254,27 @@ def main():
 
     results: dict[str, list] = {"native": [], "wombatkv": []}
     outputs: dict[str, list] = {"native": [], "wombatkv": []}
-    print(f"\n=== interleaved {N_TRIALS}-trial Path B bench (native vs daemon-TCP per trial) ===")
+    print(
+        f"\n=== interleaved {N_TRIALS}-trial Path B bench (native vs daemon-TCP per trial) ==="
+    )
     for trial in range(1, N_TRIALS + 1):
         print(f"\n  trial {trial}/{N_TRIALS}:")
         for mode in ("native", "wombatkv"):
             wipe_minio()
             t1, t2, content, reasoning = run_trial(mode, prompt_text, trial)
-            print(f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)")
+            print(
+                f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)"
+            )
             results[mode].append((t1, t2))
-            outputs[mode].append({
-                "trial": trial,
-                "content_chars": len(content),
-                "reasoning_chars": len(reasoning),
-                "content_head": content[:160],
-                "reasoning_head": reasoning[:160],
-            })
+            outputs[mode].append(
+                {
+                    "trial": trial,
+                    "content_chars": len(content),
+                    "reasoning_chars": len(reasoning),
+                    "content_head": content[:160],
+                    "reasoning_head": reasoning[:160],
+                }
+            )
 
     print("\n===== RESULTS =====")
     for mode in ("native", "wombatkv"):
@@ -295,11 +306,13 @@ def main():
     for mode in ("native", "wombatkv"):
         print(f"\n[{mode}]")
         for o in outputs[mode]:
-            print(f"  trial {o['trial']}: content={o['content_chars']} chars, "
-                  f"reasoning={o['reasoning_chars']} chars")
-            if o['reasoning_head']:
+            print(
+                f"  trial {o['trial']}: content={o['content_chars']} chars, "
+                f"reasoning={o['reasoning_chars']} chars"
+            )
+            if o["reasoning_head"]:
                 print(f"    reasoning_head: {o['reasoning_head']!r}")
-            if o['content_head']:
+            if o["content_head"]:
                 print(f"    content_head:   {o['content_head']!r}")
 
 

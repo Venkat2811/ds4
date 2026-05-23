@@ -55,23 +55,25 @@ def _load_prompt(target_tokens: int) -> str:
     if pf.exists():
         body = pf.read_text(encoding="utf-8", errors="ignore")
     else:
-        body = ("The Count of Monte Cristo is a novel by Alexandre Dumas. " * 2000)
+        body = "The Count of Monte Cristo is a novel by Alexandre Dumas. " * 2000
     chars = target_tokens * CHARS_PER_TOKEN_EST
     head = body[:chars]
     return f"Here is a passage:\n\n{head}\n\nSummarize in 5 words."
 
 
 def _send_turn(prompt: str, max_tokens: int) -> tuple[float, str]:
-    payload = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "system", "content": "You are a literary assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 0.0,
-        "stream": False,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "You are a literary assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "stream": False,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{ms.PORT}/v1/chat/completions",
         data=payload,
@@ -106,8 +108,9 @@ def _wipe_mode_state(mode: str, kvdir: Path, puffer: Path, daemon_puffer: Path) 
     # daemon-tcp-remote / native: nothing to wipe on this side
 
 
-def bench_cell(mode: str, target_tokens: int, gen_tokens: int,
-               daemon_puffer: Path, daemon_proc) -> dict:
+def bench_cell(
+    mode: str, target_tokens: int, gen_tokens: int, daemon_puffer: Path, daemon_proc
+) -> dict:
     """One (mode, ctx) bench cell: cold + warm measurement.
 
     IMPORTANT: full state wipe at the start of every cell so cell N's
@@ -153,14 +156,17 @@ def bench_cell(mode: str, target_tokens: int, gen_tokens: int,
     cold_ms = int(cold_ms_s * 1000)
     warm_ms = int(warm_ms_s * 1000)
     speedup = round(cold_ms_s / max(warm_ms_s, 1e-6), 2)
-    return ({
-        "mode": mode,
-        "est_tokens": target_tokens,
-        "ctx_chars": target_tokens * CHARS_PER_TOKEN_EST,
-        "cold_ms": cold_ms,
-        "warm_ms": warm_ms,
-        "speedup": speedup,
-    }, new_daemon_proc)
+    return (
+        {
+            "mode": mode,
+            "est_tokens": target_tokens,
+            "ctx_chars": target_tokens * CHARS_PER_TOKEN_EST,
+            "cold_ms": cold_ms,
+            "warm_ms": warm_ms,
+            "speedup": speedup,
+        },
+        new_daemon_proc,
+    )
 
 
 def setup_mode(mode: str) -> "Optional":
@@ -206,8 +212,9 @@ def teardown_mode(mode: str, daemon_proc) -> None:
         ms.kill_all_daemon()
 
 
-def run_bench(modes: list[str], ctx_tokens_list: list[int],
-              gen_tokens: int, outdir: Path) -> dict[str, list[dict]]:
+def run_bench(
+    modes: list[str], ctx_tokens_list: list[int], gen_tokens: int, outdir: Path
+) -> dict[str, list[dict]]:
     outdir.mkdir(parents=True, exist_ok=True)
     all_results: dict[str, list[dict]] = {}
     for mode in modes:
@@ -217,7 +224,9 @@ def run_bench(modes: list[str], ctx_tokens_list: list[int],
         try:
             cells = []
             for tt in ctx_tokens_list:
-                cell, daemon_proc = bench_cell(mode, tt, gen_tokens, daemon_puffer, daemon_proc)
+                cell, daemon_proc = bench_cell(
+                    mode, tt, gen_tokens, daemon_puffer, daemon_proc
+                )
                 ms.log(
                     f"    → cold={cell['cold_ms']} ms, warm={cell['warm_ms']} ms, "
                     f"speedup={cell['speedup']}×"
@@ -230,8 +239,15 @@ def run_bench(modes: list[str], ctx_tokens_list: list[int],
                 w = csv.writer(f)
                 w.writerow(["est_tokens", "ctx_chars", "cold_ms", "warm_ms", "speedup"])
                 for c in cells:
-                    w.writerow([c["est_tokens"], c["ctx_chars"],
-                                c["cold_ms"], c["warm_ms"], c["speedup"]])
+                    w.writerow(
+                        [
+                            c["est_tokens"],
+                            c["ctx_chars"],
+                            c["cold_ms"],
+                            c["warm_ms"],
+                            c["speedup"],
+                        ]
+                    )
             ms.log(f"  wrote {csv_path}")
         finally:
             teardown_mode(mode, daemon_proc)
@@ -248,7 +264,9 @@ def print_markdown_summary(results: dict[str, list[dict]]) -> None:
         print("| est_tokens | cold_ms | warm_ms | speedup |")
         print("|---:|---:|---:|---:|")
         for c in cells:
-            print(f"| {c['est_tokens']} | {c['cold_ms']} | {c['warm_ms']} | {c['speedup']}× |")
+            print(
+                f"| {c['est_tokens']} | {c['cold_ms']} | {c['warm_ms']} | {c['speedup']}× |"
+            )
 
     # Cross-mode warm comparison at each ctx
     print("\n## Cross-mode comparison (warm latency)\n")

@@ -28,6 +28,7 @@ Output:
   <outdir>/HEADLINE.md        markdown table + speedup vs native baseline
   <outdir>/server_logs/       per-port ds4-server + (mode=c3) daemon log
 """
+
 import argparse
 import concurrent.futures
 import json
@@ -52,8 +53,8 @@ import demo_showcase_lib as lib
 #       ds4-native reads .kv files from disk → fast warm restore.
 #       WombatKV reads foyer → fast warm restore.
 #       Both should be comparable here — this is the parity / honest case.
-RESTART_BETWEEN_TRIALS = os.environ.get('RESTART_BETWEEN_TRIALS', '0') == '1'
-WIPE_LOCAL_BETWEEN_TRIALS = os.environ.get('WIPE_LOCAL_BETWEEN_TRIALS', '1') == '1'
+RESTART_BETWEEN_TRIALS = os.environ.get("RESTART_BETWEEN_TRIALS", "0") == "1"
+WIPE_LOCAL_BETWEEN_TRIALS = os.environ.get("WIPE_LOCAL_BETWEEN_TRIALS", "1") == "1"
 
 
 # -----------------------------------------------------------------------------
@@ -66,7 +67,7 @@ NUM_AGENTS = 5
 # This is what the killer cell tests — shared system-prompt blocks across all
 # 5 agents sharing the SAME ds4 RAM cache + WombatKV substrate.
 PORTS = [lib.SHOWCASE_PORTS[0]] * NUM_AGENTS  # all agents share :8000
-SCENARIO_TAG = '1a'  # used to build the short daemon prefix
+SCENARIO_TAG = "1a"  # used to build the short daemon prefix
 
 # A realistic ~1500-token system prompt. Construction goal:
 #   - identical bytes used by all 5 agents (this is what Tier B matches on)
@@ -138,7 +139,7 @@ Cutoff date: today's date
 # the shared system prompt dominates the prefix.
 def _load_code_snippets():
     if not lib.PROMPT_FILE.exists():
-        raise FileNotFoundError(f'showcase needs {lib.PROMPT_FILE}')
+        raise FileNotFoundError(f"showcase needs {lib.PROMPT_FILE}")
     base = lib.PROMPT_FILE.read_text()
     return [
         base[10000:10500],
@@ -153,22 +154,25 @@ def _load_code_snippets():
 # the cross-agent-share story is clean: the conversation TAIL becomes shared
 # bytes too, once an agent has run through turn N once.
 FOLLOWUPS = [
-    'Elaborate on point 2 in your review. What is the worst-case impact?',
-    'Suggest a concrete fix for the highest-severity item. Include a diff.',
-    'What is the test plan? List the new test cases you would add.',
-    'Sign off: approve, request-changes, or comment? Justify in 30 words.',
+    "Elaborate on point 2 in your review. What is the worst-case impact?",
+    "Suggest a concrete fix for the highest-severity item. Include a diff.",
+    "What is the test plan? List the new test cases you would add.",
+    "Sign off: approve, request-changes, or comment? Justify in 30 words.",
 ]
 
 
 def _initial_prompt(snippet):
-    return ('Review this file. Apply the style guide exactly. Output ONLY the '
-            'JSON object specified above, no prose around it.\n\n'
-            '```\n' + snippet + '\n```\n')
+    return (
+        "Review this file. Apply the style guide exactly. Output ONLY the "
+        "JSON object specified above, no prose around it.\n\n"
+        "```\n" + snippet + "\n```\n"
+    )
 
 
 # -----------------------------------------------------------------------------
 # Single-agent worker
 # -----------------------------------------------------------------------------
+
 
 def run_one_agent(agent_idx, port, snippet, num_turns=5):
     """Runs `num_turns` turns sequentially on `port`. Each turn sends the
@@ -187,15 +191,15 @@ def run_one_agent(agent_idx, port, snippet, num_turns=5):
         msgs = lib.build_messages(SYSTEM_PROMPT, prior, new_user)
 
         metrics = lib.send_chat(port, msgs)
-        metrics['agent'] = agent_idx
-        metrics['port'] = port
-        metrics['turn'] = turn
+        metrics["agent"] = agent_idx
+        metrics["port"] = port
+        metrics["turn"] = turn
         results.append(metrics)
 
         # Append a placeholder assistant turn so subsequent turns see a stable
         # conversation history. (We do not need real model output for the
         # bench — only the input-token prefix matters for cache reuse.)
-        prior.append((new_user, '(continuing)'))
+        prior.append((new_user, "(continuing)"))
 
     return results
 
@@ -204,17 +208,18 @@ def run_one_agent(agent_idx, port, snippet, num_turns=5):
 # Per-mode orchestration
 # -----------------------------------------------------------------------------
 
+
 def run_mode(mode, outdir, trials):
     """Spin up N ds4-servers for `mode`, run `trials` concurrent sweeps,
     write `results.json` to outdir.
     """
     outdir = pathlib.Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    logs_dir = outdir / 'server_logs'
+    logs_dir = outdir / "server_logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     snippets = _load_code_snippets()
-    bucket = f'wombatkv-showcase-{mode.replace("_", "-")}-pi-review'.lower()
+    bucket = f"wombatkv-showcase-{mode.replace('_', '-')}-pi-review".lower()
     lib.reset_minio_bucket(bucket)
 
     # Single ds4 instance + single puffer/kvdisk pair — all 5 agents share via
@@ -223,21 +228,23 @@ def run_mode(mode, outdir, trials):
     # instance. WombatKV's value here is cross-restart durability + the
     # shared-prefix cache across agents (system-prompt blocks save once,
     # serve every subsequent agent's turn-1).
-    puffer_dir = f'/tmp/showcase-{mode}-pi-review-foyer'
-    kvdisk_dir = f'/tmp/showcase-{mode}-pi-review-kvd'
+    puffer_dir = f"/tmp/showcase-{mode}-pi-review-foyer"
+    kvdisk_dir = f"/tmp/showcase-{mode}-pi-review-kvd"
     lib.wipe(puffer_dir, kvdisk_dir)
 
     daemon_proc = None
     daemon_prefix = None
-    if mode == 'c3_daemon':
+    if mode == "c3_daemon":
         daemon_prefix = lib.short_daemon_prefix(SCENARIO_TAG, 0)
-        daemon_puffer = f'/tmp/showcase-{mode}-pi-review-daemon-foyer'
+        daemon_puffer = f"/tmp/showcase-{mode}-pi-review-daemon-foyer"
         lib.wipe(daemon_puffer)
-        daemon_log = logs_dir / 'wombatkv-daemon.log'
-        lib.log(f'  starting wombatkv-daemon with 1 prefix')
+        daemon_log = logs_dir / "wombatkv-daemon.log"
+        lib.log(f"  starting wombatkv-daemon with 1 prefix")
         daemon_proc = lib.start_wombatkv_daemon(
-            prefixes=[daemon_prefix], bucket=bucket,
-            puffer_dir=daemon_puffer, log_path=daemon_log,
+            prefixes=[daemon_prefix],
+            bucket=bucket,
+            puffer_dir=daemon_puffer,
+            log_path=daemon_log,
         )
 
     # Build the env once — reused on every server (re)start.
@@ -248,11 +255,12 @@ def run_mode(mode, outdir, trials):
         daemon_prefix=daemon_prefix,
     )
 
-    def _start_server(trial_suffix=''):
-        log_path = logs_dir / f'ds4-server-port8000{trial_suffix}.log'
-        lib.log(f'  starting ds4-server :8000  ({mode}{trial_suffix})')
-        return lib.start_server(env, port=lib.SHOWCASE_PORTS[0],
-                                kvdisk=kvdisk_dir, log_path=log_path)
+    def _start_server(trial_suffix=""):
+        log_path = logs_dir / f"ds4-server-port8000{trial_suffix}.log"
+        lib.log(f"  starting ds4-server :8000  ({mode}{trial_suffix})")
+        return lib.start_server(
+            env, port=lib.SHOWCASE_PORTS[0], kvdisk=kvdisk_dir, log_path=log_path
+        )
 
     # Start one ds4-server on :8000.
     current_server = _start_server()
@@ -269,7 +277,7 @@ def run_mode(mode, outdir, trials):
         # per RFC 0010 §5.2.
         all_trial_results = []
         for trial in range(1, trials + 1):
-            lib.log(f'  trial {trial}/{trials}: firing {NUM_AGENTS} agents in parallel')
+            lib.log(f"  trial {trial}/{trials}: firing {NUM_AGENTS} agents in parallel")
             t_trial_start = time.perf_counter()
             with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_AGENTS) as ex:
                 futs = [
@@ -281,20 +289,26 @@ def run_mode(mode, outdir, trials):
 
             for agent_idx, per_turn in enumerate(agent_results):
                 for m in per_turn:
-                    m['trial'] = trial
-            all_trial_results.append({
-                'trial': trial,
-                'wall_ms': t_trial_wall,
-                'agents': agent_results,
-            })
-            lib.log(f'    trial {trial} wall={t_trial_wall:.0f}ms')
+                    m["trial"] = trial
+            all_trial_results.append(
+                {
+                    "trial": trial,
+                    "wall_ms": t_trial_wall,
+                    "agents": agent_results,
+                }
+            )
+            lib.log(f"    trial {trial} wall={t_trial_wall:.0f}ms")
 
             # Cross-restart between trials (not after the last trial).
             if RESTART_BETWEEN_TRIALS and trial < trials:
                 if WIPE_LOCAL_BETWEEN_TRIALS:
-                    lib.log(f'  [xrestart] killing ds4 + wiping local kvdisk + foyer (S3 retained)')
+                    lib.log(
+                        f"  [xrestart] killing ds4 + wiping local kvdisk + foyer (S3 retained)"
+                    )
                 else:
-                    lib.log(f'  [xrestart] killing ds4 + restarting; local kvdisk + foyer PRESERVED')
+                    lib.log(
+                        f"  [xrestart] killing ds4 + restarting; local kvdisk + foyer PRESERVED"
+                    )
                 lib.stop_server(current_server)
                 server_procs.remove(current_server)
                 if WIPE_LOCAL_BETWEEN_TRIALS:
@@ -303,7 +317,7 @@ def run_mode(mode, outdir, trials):
                 # In c3_daemon mode the daemon keeps running with its own
                 # foyer (the substrate-side cache). That's intentional —
                 # daemons stay up while clients come and go.
-                current_server = _start_server(trial_suffix=f'-after-trial{trial}')
+                current_server = _start_server(trial_suffix=f"-after-trial{trial}")
                 server_procs.append(current_server)
 
     finally:
@@ -316,44 +330,49 @@ def run_mode(mode, outdir, trials):
             lib.stop_wombatkv_daemon(daemon_proc)
 
     out_doc = {
-        'scenario': 'pi_review',
-        'mode': mode,
-        'num_agents': NUM_AGENTS,
-        'num_turns_per_agent': 5,
-        'trials': trials,
-        'restart_between_trials': RESTART_BETWEEN_TRIALS,
-        'wipe_local_between_trials': WIPE_LOCAL_BETWEEN_TRIALS,
-        'trial_results': all_trial_results,
-        'config': {
-            'ports': PORTS,
-            'bucket': bucket,
-            'daemon_prefix': daemon_prefix,
-            'system_prompt_len_chars': len(SYSTEM_PROMPT),
+        "scenario": "pi_review",
+        "mode": mode,
+        "num_agents": NUM_AGENTS,
+        "num_turns_per_agent": 5,
+        "trials": trials,
+        "restart_between_trials": RESTART_BETWEEN_TRIALS,
+        "wipe_local_between_trials": WIPE_LOCAL_BETWEEN_TRIALS,
+        "trial_results": all_trial_results,
+        "config": {
+            "ports": PORTS,
+            "bucket": bucket,
+            "daemon_prefix": daemon_prefix,
+            "system_prompt_len_chars": len(SYSTEM_PROMPT),
         },
     }
-    (outdir / 'results.json').write_text(json.dumps(out_doc, indent=2,
-                                                    default=str))
-    lib.log(f'  wrote {outdir / "results.json"}')
+    (outdir / "results.json").write_text(json.dumps(out_doc, indent=2, default=str))
+    lib.log(f"  wrote {outdir / 'results.json'}")
 
 
 # -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------
 
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--mode', required=True,
-                    choices=['c1_native', 'c2_embedded', 'c3_daemon'])
-    ap.add_argument('--outdir', required=True)
-    ap.add_argument('--trials', type=int, default=2,
-                    help='Trials per mode. Trial 1 = cold; subsequent = warm.')
+    ap.add_argument(
+        "--mode", required=True, choices=["c1_native", "c2_embedded", "c3_daemon"]
+    )
+    ap.add_argument("--outdir", required=True)
+    ap.add_argument(
+        "--trials",
+        type=int,
+        default=2,
+        help="Trials per mode. Trial 1 = cold; subsequent = warm.",
+    )
     args = ap.parse_args()
 
-    lib.log(f'pi_review: mode={args.mode}  outdir={args.outdir}')
+    lib.log(f"pi_review: mode={args.mode}  outdir={args.outdir}")
     lib.kill_stale_servers()
     run_mode(args.mode, args.outdir, args.trials)
-    lib.log(f'pi_review: mode={args.mode} DONE')
+    lib.log(f"pi_review: mode={args.mode} DONE")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

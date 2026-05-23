@@ -74,14 +74,19 @@ def build_judgment_prompt(data: dict) -> str:
     # Find the prompt that was sent. coherence_test stores it indirectly
     # via mode_smoke; we don't capture it in the JSON. For now, embed a
     # placeholder hint; future versions should save the prompt too.
-    prompt_hint = data.get("prompt", "(prompt not captured in JSON; see coherence_test.py for the canonical pg1184 summarization prompt)")
+    prompt_hint = data.get(
+        "prompt",
+        "(prompt not captured in JSON; see coherence_test.py for the canonical pg1184 summarization prompt)",
+    )
 
     sections = [f"## Prompt sent to ds4-server\n\n{prompt_hint}\n"]
     sections.append("## Responses by mode")
     for r in results:
         sections.append(f"\n### mode: {r['mode']}")
         for it in r["iterations"]:
-            sections.append(f"\n#### iter {it['iter']} ({len(it['text'])} chars, {it['elapsed_ms']} ms)")
+            sections.append(
+                f"\n#### iter {it['iter']} ({len(it['text'])} chars, {it['elapsed_ms']} ms)"
+            )
             sections.append("```")
             sections.append(it["text"])
             sections.append("```")
@@ -109,12 +114,14 @@ def call_anthropic(system_prompt: str, user_prompt: str) -> dict:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
-    body = json.dumps({
-        "model": "claude-opus-4-7",
-        "max_tokens": 2000,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-    }).encode()
+    body = json.dumps(
+        {
+            "model": "claude-opus-4-7",
+            "max_tokens": 2000,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+    ).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=body,
@@ -128,7 +135,9 @@ def call_anthropic(system_prompt: str, user_prompt: str) -> dict:
         resp_body = r.read()
     resp = json.loads(resp_body.decode())
     # Claude API: response.content is a list of blocks
-    text_blocks = [b["text"] for b in resp.get("content", []) if b.get("type") == "text"]
+    text_blocks = [
+        b["text"] for b in resp.get("content", []) if b.get("type") == "text"
+    ]
     text = "\n".join(text_blocks).strip()
     # Try to parse JSON from the response — strip markdown fences if present
     if text.startswith("```"):
@@ -186,7 +195,9 @@ def main() -> int:
     try:
         verdict = call_anthropic(JUDGE_SYSTEM_PROMPT, user_prompt)
     except Exception as exc:
-        print(f"ERROR calling Anthropic API: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"ERROR calling Anthropic API: {type(exc).__name__}: {exc}", file=sys.stderr
+        )
         return 1
 
     out_json = json.dumps(verdict, indent=2)

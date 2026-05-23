@@ -71,15 +71,17 @@ def _pairwise_metrics(texts: list[str]) -> list[dict]:
                     break
             wa = {w for w in a.split() if len(w) > 3}
             wb = {w for w in b.split() if len(w) > 3}
-            out.append({
-                "pair": f"iter{i+1}-iter{j+1}",
-                "byte_equal": a == b,
-                "lcp_chars": lcp,
-                "shared_words": len(wa & wb),
-                "len_a": len(a),
-                "len_b": len(b),
-                "len_delta": abs(len(a) - len(b)),
-            })
+            out.append(
+                {
+                    "pair": f"iter{i + 1}-iter{j + 1}",
+                    "byte_equal": a == b,
+                    "lcp_chars": lcp,
+                    "shared_words": len(wa & wb),
+                    "len_a": len(a),
+                    "len_b": len(b),
+                    "len_delta": abs(len(a) - len(b)),
+                }
+            )
     return out
 
 
@@ -131,7 +133,9 @@ def run_mode_iters(mode: str, iterations: int) -> dict:
             ms.log(f"  remote daemon expected at {ms.REMOTE_TCP_ADDR} — no local start")
         elif mode == "daemon-http":
             ms.log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{ms.HTTP_PORT})")
-            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
+            daemon_proc = ms.start_daemon(
+                "http", "smoke-http", daemonlog, daemon_puffer
+            )
 
         for it in range(1, iterations + 1):
             ms.log(f"  iter {it}: starting ds4-server")
@@ -139,12 +143,16 @@ def run_mode_iters(mode: str, iterations: int) -> dict:
             ms.log(f"  iter {it}: sending prompt")
             t0 = time.time()
             elapsed, text = ms.send_turn(ms.PROMPT_TEXT)
-            ms.log(f"    iter {it}: elapsed={elapsed*1000:.0f} ms, len={len(text)}, first40={text[:40]!r}")
-            iter_records.append({
-                "iter": it,
-                "elapsed_ms": int(elapsed * 1000),
-                "text": text,
-            })
+            ms.log(
+                f"    iter {it}: elapsed={elapsed * 1000:.0f} ms, len={len(text)}, first40={text[:40]!r}"
+            )
+            iter_records.append(
+                {
+                    "iter": it,
+                    "elapsed_ms": int(elapsed * 1000),
+                    "text": text,
+                }
+            )
             # kill server + wipe local kvdir between iters. WombatKV
             # state (puffer, S3, daemon) survives so iter 2+ does
             # warm restore for WombatKV modes.
@@ -181,16 +189,25 @@ def _looks_like_garbage(text: str) -> tuple[bool, str]:
     if not stripped:
         return True, "empty response"
     if len(stripped) < 20:
-        return True, f"too short ({len(stripped)} chars) — model usually emits > 20 chars at max_tokens=32"
+        return (
+            True,
+            f"too short ({len(stripped)} chars) — model usually emits > 20 chars at max_tokens=32",
+        )
     words = stripped.split()
     long_words = [w for w in words if len(w) > 3]
     if len(long_words) < 3:
-        return True, f"only {len(long_words)} words > 3 chars — looks like single-token loop or punctuation"
+        return (
+            True,
+            f"only {len(long_words)} words > 3 chars — looks like single-token loop or punctuation",
+        )
     # ASCII heuristic: if > 20% of chars are non-printable / non-ASCII,
     # something's wrong (model is English in our prompts).
     non_ascii = sum(1 for c in stripped if not (32 <= ord(c) < 127 or c in "\n\t"))
     if non_ascii / len(stripped) > 0.2:
-        return True, f"{non_ascii}/{len(stripped)} chars non-ASCII — wrong-character output"
+        return (
+            True,
+            f"{non_ascii}/{len(stripped)} chars non-ASCII — wrong-character output",
+        )
     return False, ""
 
 
@@ -286,8 +303,8 @@ def summarize(results: list[dict]) -> dict:
                 note = (
                     comp
                     + "coherence noticeably lower than native — could be more Metal noise (this mode "
-                      "runs at different latency profile) OR small WombatKV restore drift. Needs more "
-                      "iterations to disambiguate, OR a tensor-level test."
+                    "runs at different latency profile) OR small WombatKV restore drift. Needs more "
+                    "iterations to disambiguate, OR a tensor-level test."
                 )
         verdicts[mode] = {
             "verdict": "PASS",
@@ -342,12 +359,16 @@ def main() -> int:
         return 2
 
     if not ms.DS4_BIN.exists():
-        print(f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr)
+        print(
+            f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr
+        )
         return 2
 
     if "daemon-tcp-remote" in args.modes:
         if not args.remote_tcp:
-            print("ERROR: daemon-tcp-remote needs --remote-tcp HOST:PORT", file=sys.stderr)
+            print(
+                "ERROR: daemon-tcp-remote needs --remote-tcp HOST:PORT", file=sys.stderr
+            )
             return 2
         ms.REMOTE_TCP_ADDR = args.remote_tcp
 
@@ -357,27 +378,35 @@ def main() -> int:
             results.append(run_mode_iters(m, args.iters))
         except Exception as exc:
             ms.log(f"  EXCEPTION: {type(exc).__name__}: {exc}")
-            results.append({
-                "mode": m,
-                "error": str(exc),
-                "iterations": [],
-                "pairwise": [],
-            })
+            results.append(
+                {
+                    "mode": m,
+                    "error": str(exc),
+                    "iterations": [],
+                    "pairwise": [],
+                }
+            )
 
     print()
     print("=== per-mode iterations ===")
     for r in results:
         print(f"\n[{r['mode']}]")
         for it in r["iterations"]:
-            print(f"  iter {it['iter']}: {it['elapsed_ms']} ms, len={len(it['text'])}, head={it['text'][:60]!r}")
+            print(
+                f"  iter {it['iter']}: {it['elapsed_ms']} ms, len={len(it['text'])}, head={it['text'][:60]!r}"
+            )
         for p_ in r["pairwise"]:
-            print(f"  {p_['pair']}: byte_equal={p_['byte_equal']} lcp={p_['lcp_chars']} shared_words={p_['shared_words']} len_delta={p_['len_delta']}")
+            print(
+                f"  {p_['pair']}: byte_equal={p_['byte_equal']} lcp={p_['lcp_chars']} shared_words={p_['shared_words']} len_delta={p_['len_delta']}"
+            )
 
     summary = summarize(results)
     print()
     print("=== noise floor (native) ===")
     print(f"  native min lcp across pairs: {summary['noise_floor']['native_min_lcp']}")
-    print(f"  native all byte-equal:       {summary['noise_floor']['native_all_byte_equal']}")
+    print(
+        f"  native all byte-equal:       {summary['noise_floor']['native_all_byte_equal']}"
+    )
     print()
     print("=== verdicts ===")
     for mode, v in summary["verdicts"].items():
@@ -385,10 +414,19 @@ def main() -> int:
         print(f"    {v['reason']}")
 
     if args.output:
-        args.output.write_text(json.dumps({"results": results, "summary": summary}, indent=2))
+        args.output.write_text(
+            json.dumps({"results": results, "summary": summary}, indent=2)
+        )
         print(f"\n[full results written to {args.output}]")
 
-    rc = 0 if all(v["verdict"] in ("PASS", "STRONG-PASS") for v in summary["verdicts"].values()) else 1
+    rc = (
+        0
+        if all(
+            v["verdict"] in ("PASS", "STRONG-PASS")
+            for v in summary["verdicts"].values()
+        )
+        else 1
+    )
     return rc
 
 

@@ -253,7 +253,9 @@ def main():
         sys.exit(f"FATAL: prompt file missing: {PROMPT_FILE}")
     prompt_chars = int(os.environ.get("PROMPT_CHARS", "5200"))
     prompt_text = PROMPT_FILE.read_bytes()[:prompt_chars].decode(errors="replace")
-    print(f"\n[prompt slice: {len(prompt_text)} chars ≈ {len(prompt_text)//4} tokens estimate]")
+    print(
+        f"\n[prompt slice: {len(prompt_text)} chars ≈ {len(prompt_text) // 4} tokens estimate]"
+    )
 
     results: dict[str, list] = {"native": [], "wombatkv": []}
     outputs: dict[str, list] = {"native": [], "wombatkv": []}
@@ -263,15 +265,19 @@ def main():
         for mode in ("native", "wombatkv"):
             wipe_minio()
             t1, t2, content, reasoning = run_trial(mode, prompt_text, trial)
-            print(f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)")
+            print(
+                f"    {mode:9s}: turn1={t1:.0f} ms (cold), turn2={t2:.0f} ms (after restart)"
+            )
             results[mode].append((t1, t2))
-            outputs[mode].append({
-                "trial": trial,
-                "content_chars": len(content),
-                "reasoning_chars": len(reasoning),
-                "content_head": content[:160],
-                "reasoning_head": reasoning[:160],
-            })
+            outputs[mode].append(
+                {
+                    "trial": trial,
+                    "content_chars": len(content),
+                    "reasoning_chars": len(reasoning),
+                    "content_head": content[:160],
+                    "reasoning_head": reasoning[:160],
+                }
+            )
 
     print("\n===== RESULTS =====")
     for mode in ("native", "wombatkv"):
@@ -301,11 +307,13 @@ def main():
     for mode in ("native", "wombatkv"):
         print(f"\n[{mode}]")
         for o in outputs[mode]:
-            print(f"  trial {o['trial']}: content={o['content_chars']} chars, "
-                  f"reasoning={o['reasoning_chars']} chars")
-            if o['reasoning_head']:
+            print(
+                f"  trial {o['trial']}: content={o['content_chars']} chars, "
+                f"reasoning={o['reasoning_chars']} chars"
+            )
+            if o["reasoning_head"]:
                 print(f"    reasoning_head: {o['reasoning_head']!r}")
-            if o['content_head']:
+            if o["content_head"]:
                 print(f"    content_head:   {o['content_head']!r}")
 
 

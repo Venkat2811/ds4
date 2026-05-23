@@ -128,8 +128,7 @@ USERS = [
             "What's a 30-minute recipe?",
             "I'm allergic to coconut. Can we adapt that with what I "
             "have — chicken stock, cream, and tomato paste?",
-            "What's a starch I can serve with it that takes the same "
-            "amount of time?",
+            "What's a starch I can serve with it that takes the same amount of time?",
         ],
     },
     {
@@ -234,8 +233,7 @@ USERS = [
             "waking up. I've heard that's a cliché — is it really?",
             "What's a way to open in medias res without burying the "
             "reader in confusing names and places?",
-            "How do I balance dialogue and interiority in that kind "
-            "of opening?",
+            "How do I balance dialogue and interiority in that kind of opening?",
         ],
     },
 ]
@@ -258,8 +256,7 @@ def _looks_like_garbage(text: str) -> tuple[bool, str]:
     # Control-character salad detection: 0x00-0x1F / 0x7F excluding the
     # whitespace controls (\t \n \r) is a strong corruption signal.
     bad_controls = sum(
-        1 for c in text
-        if (ord(c) < 0x20 and c not in "\t\n\r") or ord(c) == 0x7F
+        1 for c in text if (ord(c) < 0x20 and c not in "\t\n\r") or ord(c) == 0x7F
     )
     if bad_controls > 0:
         return True, f"{bad_controls} control-char(s) in output"
@@ -313,7 +310,7 @@ def run_one_user(user: dict) -> dict:
         garbage, why = _looks_like_garbage(reply)
         ms.log(
             f"    user={user['name']:<6} turn={turn_idx} "
-            f"elapsed={elapsed*1000:.0f}ms len={len(reply)} "
+            f"elapsed={elapsed * 1000:.0f}ms len={len(reply)} "
             f"garbage={garbage} first40={reply[:40]!r}"
         )
         history.append({"role": "assistant", "content": reply})
@@ -345,7 +342,9 @@ def _bucket_for_mode(mode: str) -> str | None:
 def run_mode(mode: str, restart_between_users: bool) -> dict:
     """Run all 5 users × N turns against `mode`. Returns full results
     dict including per-user records, latency stats, and verdict."""
-    ms.log(f"=== mode={mode} users={len(USERS)} restart_between={restart_between_users} ===")
+    ms.log(
+        f"=== mode={mode} users={len(USERS)} restart_between={restart_between_users} ==="
+    )
     kvdir = Path(f"/tmp/multi-user-kvdir-{mode}")
     puffer = Path(f"/tmp/multi-user-puffer-{mode}")
     daemon_puffer = Path(f"/tmp/multi-user-daemonpuffer-{mode}")
@@ -373,7 +372,9 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
         elif mode == "daemon-tcp":
             daemon_proc = ms.start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif mode == "daemon-http":
-            daemon_proc = ms.start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
+            daemon_proc = ms.start_daemon(
+                "http", "smoke-http", daemonlog, daemon_puffer
+            )
 
         ms.log(f"  starting ds4-server ({mode})")
         ms.start_server(mode, kvdir, puffer, serverlog)
@@ -396,9 +397,7 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
 
         # Latency stats: median across all turn-1s vs across all turn-(2..N)s.
         turn1_ms = [u["turns"][0]["elapsed_ms"] for u in user_records]
-        later_ms = [
-            t["elapsed_ms"] for u in user_records for t in u["turns"][1:]
-        ]
+        later_ms = [t["elapsed_ms"] for u in user_records for t in u["turns"][1:]]
         latency_stats = {
             "turn1_median_ms": int(statistics.median(turn1_ms)) if turn1_ms else 0,
             "turn1_min_ms": min(turn1_ms) if turn1_ms else 0,
@@ -434,9 +433,7 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
                         )
 
         # Verdict
-        any_garbage = any(
-            t["garbage"] for u in user_records for t in u["turns"]
-        )
+        any_garbage = any(t["garbage"] for u in user_records for t in u["turns"])
         verdict = "PASS"
         notes = []
         if any_garbage:
@@ -450,7 +447,9 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
             notes.append(f"garbage output(s): {garbage_rows}")
         if mode != "native":
             if bucket_counts and bucket_counts[-1] == 0:
-                notes.append("bucket empty after all users — WombatKV did not write blocks")
+                notes.append(
+                    "bucket empty after all users — WombatKV did not write blocks"
+                )
             if (
                 "intra_user_speedup" in latency_stats
                 and latency_stats["intra_user_speedup"] < 1.1
@@ -503,8 +502,8 @@ def main() -> int:
         "--restart-between-users",
         action="store_true",
         help="kill+restart ds4-server between users to exercise "
-             "cross-session WombatKV restore (warm-restore must come "
-             "from S3/daemon, not engine-local kvdir)",
+        "cross-session WombatKV restore (warm-restore must come "
+        "from S3/daemon, not engine-local kvdir)",
     )
     p.add_argument(
         "--output",
@@ -515,7 +514,9 @@ def main() -> int:
     args = p.parse_args()
 
     if not ms.DS4_BIN.exists():
-        print(f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr)
+        print(
+            f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr
+        )
         return 2
 
     modes = (
@@ -524,7 +525,10 @@ def main() -> int:
         else [args.mode]
     )
     if any(m.startswith("daemon-") for m in modes) and not ms.DAEMON_BIN.exists():
-        print(f"ERROR: {ms.DAEMON_BIN} not found — build wombatkv-daemon first", file=sys.stderr)
+        print(
+            f"ERROR: {ms.DAEMON_BIN} not found — build wombatkv-daemon first",
+            file=sys.stderr,
+        )
         return 2
 
     all_results = []
@@ -534,7 +538,11 @@ def main() -> int:
         except Exception as exc:
             ms.log(f"  EXCEPTION: {type(exc).__name__}: {exc}")
             all_results.append(
-                {"mode": mode, "verdict": "ERROR", "error": f"{type(exc).__name__}: {exc}"}
+                {
+                    "mode": mode,
+                    "verdict": "ERROR",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
             )
 
     # Summary

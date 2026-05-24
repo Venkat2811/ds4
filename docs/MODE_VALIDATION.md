@@ -7,11 +7,11 @@ The five WombatKV modes documented in wombatkv's `docs/ENV.md`:
 
 | mode | engine-side env | what's where |
 |---|---|---|
-| 1 — native | (none) | no WombatKV in the picture |
-| 2 — embedded | `DS4_WOMBATKV_ENABLE=1` + S3 env | ds4-server owns the WombatKV store in-process |
-| 3 — daemon SHM | `DS4_WOMBATKV_ENABLE=1` + `WMBT_KV_REMOTE_PREFIX=…` | a `wombatkv-daemon --prefix <name>` on the same host owns the store |
-| 4 — daemon TCP | `DS4_WOMBATKV_DAEMON_TCP=<host:port>` | a `wombatkv-daemon --tcp <addr>` on (typically) a different host owns the store, length-prefixed rkyv frames over TCP |
-| 5 — daemon HTTP | `DS4_WOMBATKV_DAEMON_HTTP=<host:port>` | a `wombatkv-daemon --http <addr>` on (typically) a different host owns the store, same rkyv envelope as mode 4 wrapped in HTTP/1.1 POSTs to `/wmbt/v1/rpc` (load-balancer / proxy friendly) |
+| 1, native | (none) | no WombatKV in the picture |
+| 2, embedded | `DS4_WOMBATKV_ENABLE=1` + S3 env | ds4-server owns the WombatKV store in-process |
+| 3, daemon SHM | `DS4_WOMBATKV_ENABLE=1` + `WMBT_KV_REMOTE_PREFIX=…` | a `wombatkv-daemon --prefix <name>` on the same host owns the store |
+| 4, daemon TCP | `DS4_WOMBATKV_DAEMON_TCP=<host:port>` | a `wombatkv-daemon --tcp <addr>` on (typically) a different host owns the store, length-prefixed rkyv frames over TCP |
+| 5, daemon HTTP | `DS4_WOMBATKV_DAEMON_HTTP=<host:port>` | a `wombatkv-daemon --http <addr>` on (typically) a different host owns the store, same rkyv envelope as mode 4 wrapped in HTTP/1.1 POSTs to `/wmbt/v1/rpc` (load-balancer / proxy friendly) |
 
 ## Same-host smoke (`mode_smoke.py`)
 
@@ -40,7 +40,7 @@ Per-mode validation:
 The actual mode-4 use case: ds4-server on one machine, daemon on
 another. Tests the wire format + remote S3 ownership end-to-end.
 
-### On the **remote** host (the daemon side, e.g. venkat-pc)
+### On the **remote** host (the daemon side, e.g. the Linux x86_64 test host)
 
 ```bash
 # Pre-req: native MinIO reachable from this host (local or remote)
@@ -76,7 +76,7 @@ make WOMBATKV=1 WOMBATKV_DIR=/path/to/wombatkv ds4-server
 
 # Run the smoke pointed at the remote daemon:
 python3 scripts/mode_smoke.py daemon-tcp-remote \
-  --remote-tcp <venkat-pc-ip>:7878
+  --remote-tcp <linux-host-ip>:7878
 ```
 
 What the script validates for cross-machine TCP:
@@ -90,20 +90,20 @@ What the script validates for cross-machine TCP:
 
 ### Important compatibility checks
 
-1. **dylib commit ↔ daemon commit** — both must be from the same
+1. **dylib commit ↔ daemon commit**, both must be from the same
    wombatkv commit. Wire format isn't versioned in the alpha
    breaking window; mismatched commits silently break block-prefix
    lookups.
-2. **Model fingerprint** — `DS4_WOMBATKV_FINGERPRINT24` must derive
+2. **Model fingerprint**: `DS4_WOMBATKV_FINGERPRINT24` must derive
    from the same model path on both sides, OR both sides must read
    blocks under the same explicit fingerprint. ds4 auto-derives
    from `sha1(model_path)`, so the path string itself matters.
-3. **WMBT_KV_NAMESPACE** — ds4 defaults to `ds4-metal`; if you
+3. **WMBT_KV_NAMESPACE**, ds4 defaults to `ds4-metal`; if you
    override on one side, override on both.
-4. **Bucket** — set on the daemon side. The engine side knows
+4. **Bucket**, set on the daemon side. The engine side knows
    nothing about S3 in mode 4.
 
-## Last alpha.6 validation results (M3 Max + venkat-pc Ubuntu 22.04, 2026-05-18)
+## Last alpha.6 validation results (M3 Max + Linux x86_64 (Ubuntu 22.04), 2026-05-18)
 
 Same-host matrix (`scripts/mode_smoke.py all` on Mac):
 
@@ -116,21 +116,21 @@ Same-host matrix (`scripts/mode_smoke.py all` on Mac):
 
 ds4_test `--server` with each mode's WombatKV env: PASS in all 4.
 
-Cross-machine TCP (`mode_smoke.py daemon-tcp-remote`) — Mac
-ds4-server (M3 Max) connecting to a wombatkv-daemon on venkat-pc
-(Ubuntu 22.04, x86_64) over LAN at `192.168.2.103:7878`, daemon's
-S3 backing on venkat-pc-local MinIO:
+Cross-machine TCP (`mode_smoke.py daemon-tcp-remote`). Mac
+ds4-server (M3 Max) connecting to a wombatkv-daemon on the Linux x86_64 test host
+(Ubuntu 22.04, x86_64) over LAN at `10.0.0.5:7878`, daemon's
+S3 backing on host-local MinIO:
 
-| direction | turn-1 cold | turn-2 warm | speedup | blocks in venkat-pc S3 |
+| direction | turn-1 cold | turn-2 warm | speedup | blocks in Linux daemon S3 |
 |---|---:|---:|---:|---:|
-| Mac engine → venkat-pc daemon → venkat-pc S3 | 42203 ms | 6757 ms | 6.25× | 12 |
+| Mac engine → Linux daemon → Linux daemon S3 | 42203 ms | 6757 ms | 6.25× | 12 |
 
-Confirmation signals on the venkat-pc side after the smoke:
-- daemon log shows 3 TCP `accepted` events from peer `192.168.2.102`
+Confirmation signals on the Linux host side after the smoke:
+- daemon log shows 3 TCP `accepted` events from peer `10.0.0.5`
   (Mac's LAN IP), one per ds4-server lifecycle (start, turn-1
   request, restart-and-turn-2).
 - `wombatkv-xhost-smoke` bucket has 12 objects, keys formatted
-  `kv/puffer-shm/ds4-metal/wombatkv/v1/block/b3=<hex>` — the
+  `kv/puffer-shm/ds4-metal/wombatkv/v1/block/b3=<hex>`, the
   canonical block-prefix content-address scheme. No SHM artifacts
   on either side (TCP-only daemon).
 - SlateDB metadata index hydrated 0 blocks at boot (fresh dir),
@@ -161,7 +161,7 @@ Single-trial 2-turn pattern per mode, logs an
 | daemon-shm |  0 | yes (4) |
 | daemon-tcp |  0 | yes (5) |
 
-### Strongest — tensor-level (`scripts/logit_fidelity_test.py`)
+### Strongest, tensor-level (`scripts/logit_fidelity_test.py`)
 
 The **byte-fidelity proof** the text-only tests couldn't deliver.
 Uses the `POST /v1/internal/logits` endpoint added in this branch
@@ -180,16 +180,16 @@ Procedure per mode:
 6. WombatKV-mode L∞ should be ≤ native floor + tolerance.
 
 **Four iterations of this test landed three different bugs (all
-false-positive L∞=0 readings) before finding the real signal —
+false-positive L∞=0 readings) before finding the real signal -
 see the 4-stage post-mortem at the end of this section. The
 CANONICAL result below is from the v4 harness which drives the
 WombatKV load+save path inline inside `/v1/internal/logits`.**
 
-**Canonical result — v4 harness, 1010-token prompt:**
+**Canonical result, v4 harness, 1010-token prompt:**
 
 | mode | iter-1 logits (cold) | iter-2 logits (warm) | speedup | loaded_tokens | top-1 cold | top-1 warm | L∞ logit |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| native (baseline) | 5829 ms | 5553 ms | 1.05× | — | 28 | 28 | **0.0000** |
+| native (baseline) | 5829 ms | 5553 ms | 1.05× |: | 28 | 28 | **0.0000** |
 | embedded | 6266 ms | 296 ms | 21.2× | 1009 | 28 | **1137** | **0.2312** |
 | daemon-shm | 7783 ms | 2780 ms | 2.8× | 1009 | 28 | **1137** | **0.2312** |
 | daemon-tcp | 7907 ms | 2571 ms | 3.1× | 1009 | 28 | **1137** | **0.2312** |
@@ -200,17 +200,17 @@ time:
   (8 blocks × 128 tokens with 16-token chain alignment). 0 in
   iter-1.
 - Bucket counts after each mode: 8-18 objects, non-zero.
-- iter-2 logits latency is 3-21× faster than iter-1 cold — only
+- iter-2 logits latency is 3-21× faster than iter-1 cold, only
   possible if warm restore really happened.
 
 **Honest findings:**
 
 1. **Metal IS bit-deterministic** for cold full prefill at the
-   logit level — native iter-1 ↔ iter-2 produce identical top-K
+   logit level, native iter-1 ↔ iter-2 produce identical top-K
    logits to 7 sig figs (L∞ = 0.0000).
 2. **WombatKV's byte storage is bit-correct.** All three WombatKV
    modes produce the EXACT same warm logits (top-1 token = 1137,
-   L∞ = 0.2312 vs cold) — distinct transports (embedded, daemon-
+   L∞ = 0.2312 vs cold), distinct transports (embedded, daemon-
    SHM, daemon-TCP) all serialize/restore through the same cabi
    byte path and converge on the same warm result. Strong evidence
    the bytes WombatKV stores and restores are themselves identical
@@ -231,14 +231,14 @@ time:
    warm-restore architectures, not specific to WombatKV.
 
 **Practical implication:** for typical LLM inference (non-strict-
-determinism), the drift is acceptable — model behavior is
+determinism), the drift is acceptable, model behavior is
 preserved (top-3 overlap is reliable, English fluency
 unaffected per the LLM-judge review, ds4-server tests pass
 across all modes). For strict bit-equality, warm restore is
-not a drop-in replacement for cold prefill — some logit-flip
+not a drop-in replacement for cold prefill, some logit-flip
 rate is unavoidable.
 
-## v8 — bit-parity with ds4 huge-blob warm restore (the actual fix)
+## v8, bit-parity with ds4 huge-blob warm restore (the actual fix)
 
 **Resolution of the v5/v7 logit-drift finding.** After identifying
 that WombatKV's per-block save was missing partial-tail compressed
@@ -260,7 +260,7 @@ bit-exactly:** identical L∞ (0.0408), identical top-1 logit
 (26.1416), top-1 argmax preserved (28 → 28). The 0.0408 residual
 is the inherent kernel-batching difference between the trailing-1
 forward (used by warm restore) and the full-prefill kernel (used by
-cold) — same in both warm paths, not WombatKV-specific.
+cold), same in both warm paths, not WombatKV-specific.
 
 ### Root cause (v5/v7 → v8)
 
@@ -269,15 +269,15 @@ Two gaps in the kvblocks layer relative to ds4's huge-blob save:
 1. **Per-layer compressor state was not saved** (`attn_state_kv`,
    `attn_state_score`, `index_state_kv`, `index_state_score`).
    `save_payload` always wrote them; `save_block` didn't. v8
-   sidecar (v3 format) includes them — but this alone didn't move
+   sidecar (v3 format) includes them, but this alone didn't move
    the needle (state arrays are only used by prefill kernels, not
-   by the trailing-1 forward — see v6 commit).
+   by the trailing-1 forward, see v6 commit).
 
 2. **Partial-tail compressed K/V was not saved.** `save_block`
    writes only complete blocks; for a non-block-aligned prompt
    (e.g., 1010 tokens with block_tokens=128, the partial tail at
-   positions [896, 1010) has compressed K/V — ~28 rows per ratio=4
-   layer — that no block captures. `save_payload` always wrote
+   positions [896, 1010) has compressed K/V: ~28 rows per ratio=4
+   layer, that no block captures. `save_payload` always wrote
    all `n_comp` rows including the partial tail. v8 sidecar (v3
    format) writes those bytes after the attn_state arrays per
    layer, with a `partial_comp_count` u32 so install knows how
@@ -296,18 +296,18 @@ The combined v3 sidecar (state + partial tail) closes the gap.
          `g_wmbt_kv_block_tokens` through.
   tests/ds4_test.c: 2 call sites updated for the new signature.
 
-Pre-OSS alpha breaking-window applies — v2 sidecars in S3 will not
+Pre-OSS alpha breaking-window applies, v2 sidecars in S3 will not
 load. Wipe buckets when upgrading.
 
 ### Sidecar size impact
 
 Sidecar grew from ~11 MB (v2 raw-only) to ~22 MB (v3 raw + state +
 partial-tail comp) for the 1010-token DSV4 workload. Compressed
-on S3 (zstd default): ~13.7 MB. Single sidecar per session — not
-per block — so the marginal cost is small relative to the block
+on S3 (zstd default): ~13.7 MB. Single sidecar per session, not
+per block, so the marginal cost is small relative to the block
 storage. Worth it for bit-parity with huge-blob warm restore.
 
-## Parity check — WombatKV vs ds4's own huge-blob warm restore
+## Parity check. WombatKV vs ds4's own huge-blob warm restore
 
 **The ship-it bar:** WombatKV shouldn't introduce MORE divergence
 than ds4's own native warm-restore mechanism (the huge-blob
@@ -333,7 +333,7 @@ between turns (so turn-2 hits ds4's huge-blob load). Text-level
 - All 4 warm modes (native-warm + 3 WombatKV) produce the same
   divergence pattern: `lcp = 0, shared_words ∈ [4, 5]`.
 - Native-without-warm (2 cold prefills) shows a different
-  pattern: `lcp = 9, shared_words = 4` — cold-vs-cold drift is
+  pattern: `lcp = 9, shared_words = 4`, cold-vs-cold drift is
   Metal noise on the 4-token decode chain only.
 - Warm-restore paths (ds4 huge-blob + WombatKV) add to that the
   kernel-path difference at the prompt boundary (`trailing-1
@@ -345,7 +345,7 @@ between turns (so turn-2 hits ds4's huge-blob load). Text-level
 
 **Conclusion for shipping:** if you consider ds4's native huge-
 blob warm restore acceptable (and ds4 ships with it on by
-default), WombatKV's warm restore is acceptable too — same
+default), WombatKV's warm restore is acceptable too, same
 behavior at the text-output level.
 
 The v4 Tier-B logit test's L∞ = 0.23 drift for WombatKV modes
@@ -353,7 +353,7 @@ is therefore not WombatKV-specific; it's the engine's `restore +
 trailing-1 forward` vs cold-full-prefill kernel difference,
 which manifests in huge-blob warm too. (Logit-level
 verification of huge-blob warm would require adding KV-disk
-load to `/v1/internal/logits` — current chat-completion path
+load to `/v1/internal/logits`, current chat-completion path
 invalidates the session before logits sampling, so the text-
 level mode_smoke parity above is the cleanest available
 demonstration.)
@@ -373,7 +373,7 @@ and "is correct" is documented.
 Used 5- and 150-token prompts. Both below `KV_CACHE_DEFAULT_MIN_
 TOKENS = 512` in `ds4_server.c`, so ds4 never saves to WombatKV
 regardless of mode. Buckets ended up empty (0 objects). iter-2
-was just another fresh cold prefill — no warm path. L∞=0 reading
+was just another fresh cold prefill, no warm path. L∞=0 reading
 was Metal determinism for repeated cold prefills, not WombatKV
 correctness. **Detected via** bucket-count spot-check.
 
@@ -398,9 +398,9 @@ calls `ds4_session_invalidate(s->session)` at the end (sets
 the session is empty. The skip check sees an empty session, falls
 through to sync, fresh cold prefill again. L∞=0 reading was once
 more Metal determinism. **Detected via** the new `sync_skipped`
-field in the response — it stayed false.
+field in the response, it stayed false.
 
-**v4 (endpoint drives WombatKV load+save inline — the canonical):**
+**v4 (endpoint drives WombatKV load+save inline, the canonical):**
 Endpoint now calls `wmbt_kv_try_load_blocks` (the same helper
 chat-completion uses), then sync, then `wmbt_kv_save_blocks`.
 Self-contained measurement, no chat-completion preamble needed.
@@ -412,7 +412,7 @@ token prompt). Bucket counts confirm save engaged on iter-1.
 (all L∞=0 across all modes), suspect a measurement bug before
 celebrating. Strict bit-equality across distinct architectural
 paths (cold full prefill vs warm restore + trailing-1 forward)
-is implausible — Metal compute kernels with different batching
+is implausible. Metal compute kernels with different batching
 will produce slightly different reductions even when reading
 identical K/V. If your fidelity proof reports zero drift, you're
 probably measuring zero, not fidelity.
@@ -428,7 +428,7 @@ and reports each WombatKV mode's coherence relative to it.
   computed K/V". That claim needs tensor-level hooks (logit
   snapshot or layer-buffer dump) which ds4-server's HTTP API
   doesn't expose. Even Metal itself is **not bit-deterministic**
-  for ds4 inference on M3 Max — observed via native baseline
+  for ds4 inference on M3 Max, observed via native baseline
   where repeated cold runs of the same prompt at temp=0 produce
   divergent text trajectories (argmax flips on near-tied logits).
 - CAN prove: every iteration of every mode returns reasonable
@@ -441,7 +441,7 @@ Verdict rules:
   (non-empty, ≥ 20 chars, ≥ 3 non-trivial words, ≥ 80% ASCII).
 - INFORMATIONAL: pairwise lcp / shared_words distributions vs the
   native baseline. Lower coherence than native is noted but not
-  auto-failed — could be Metal noise variance OR small WombatKV
+  auto-failed, could be Metal noise variance OR small WombatKV
   drift; ambiguous without a tensor-level test.
 
 Result file:
@@ -455,7 +455,7 @@ Result file:
 | daemon-tcp | 3 | 0/3 | 64 | 1..10 | PASS |
 
 All 4 modes pass the HARD garbage check. WombatKV modes show
-lower max_lcp than native baseline's best-pair (137) — this could
+lower max_lcp than native baseline's best-pair (137), this could
 mean either (a) Metal noise distributes differently across modes
 due to latency profile differences, or (b) WombatKV restore
 introduces small numerical drift on top of Metal noise. The
@@ -464,7 +464,7 @@ text-only test can't disambiguate; a tensor-level test would.
 ## Engine compute baseline (`ds4-bench`)
 
 CONTRIBUTING.md's speed-regression track. `ds4-bench` runs the
-ds4 engine's compute path only — it does NOT engage WombatKV
+ds4 engine's compute path only, it does NOT engage WombatKV
 (no save/load hooks in `ds4_bench.c`). The CSV is therefore a
 **pure engine throughput reference**, useful for catching
 engine-side perf regressions on future PRs.
@@ -486,7 +486,7 @@ Captured at v0.1.0-alpha.7:
 ## WombatKV-aware perf sweep (`ds4_bench_wombatkv.py`)
 
 Cold + warm latency per (mode × ctx-size) cell. Each cell starts
-with a full state wipe — local kvdir, local puffer, daemon puffer,
+with a full state wipe, local kvdir, local puffer, daemon puffer,
 daemon process, and S3 bucket all reset before the cold turn, so
 each measurement is independent (no leakage from a previous cell's
 saved blocks even when prompts share a prefix).
@@ -520,12 +520,12 @@ Last run on M3 Max (Metal):
 
 What this confirms:
 - Native warm ≈ native cold (no warm path; expected ~1×). Validates
-  that the bench harness is fair — kvdir wipe + restart = true
+  that the bench harness is fair, kvdir wipe + restart = true
   cold prefill in native mode.
 - WombatKV modes deliver consistent strong speedups across the
   ctx sweep. Warm latency is **sub-second across all WombatKV
   modes for ≤ 1024 tokens**, sub-2.5s for 2048.
-- Speedup grows with context size — cold prefill cost scales with
+- Speedup grows with context size, cold prefill cost scales with
   attention's quadratic, warm restore scales roughly linearly in
   block count. So WombatKV's value proposition (cell-B story)
   scales with prompt length.
@@ -552,16 +552,16 @@ the per-mode numbers above. The two bench tracks are
 complementary: `ds4-bench` = engine compute regression;
 `multi_trial_bench.py` = WombatKV warm-restore regression.
 
-## v11 — RFC 0018 envelope discipline (sidecar v4 + block v2 + cabi wire envelope)
+## v11: RFC 0018 envelope discipline (sidecar v4 + block v2 + cabi wire envelope)
 
-alpha.11 lands all 4 actionable phases of RFC 0018 — universal CRC32C
+alpha.11 lands all 4 actionable phases of RFC 0018, universal CRC32C
 envelopes across every WombatKV persistence and wire format. The
 discipline is "the same envelope everywhere": magic + version + CRC32C
 + length, single Castagnoli polynomial (0x82F63B78), strict-equal
 version checks at decode (no fallback parsers, pre-launch breaking-
 window applies).
 
-### Phase 1 — ds4 sidecar (raw_tail) envelope v3 → v4
+### Phase 1, ds4 sidecar (raw_tail) envelope v3 → v4
 
 Adds an 8-byte CRC32C + body_len pair to the existing magic + version
 header. Body bytes (per-layer raw rows + compressor state + partial-
@@ -572,18 +572,18 @@ before decoding any K/V state.
 
 Sidecar size at canonical 1027-token prompt: 23,478,560 bytes (was
 23,478,552 in alpha.10 v3 = +8 bytes for body_len + CRC32C). Save
-+ install both use a table-based CRC32C (~500 MB/s scalar) — under
++ install both use a table-based CRC32C (~500 MB/s scalar), under
 50 ms on a 22 MB sidecar. Negligible vs the existing S3 PUT/GET
 latency.
 
-### Phase 2 — ds4 block (KVB1) envelope v1 → v2
+### Phase 2, ds4 block (KVB1) envelope v1 → v2
 
 Repurposes two existing zero-placeholder slots in the v1 block layout
 (the `reserved` u32 in the header + the `crc32` u32 placeholder in
 the trailer) to carry real `body_len` + real CRC32C over body bytes.
-**Wire size unchanged** — pure repurposing.
+**Wire size unchanged**, pure repurposing.
 
-### Phase 3 — cabi wire envelope (TCP + HTTP)
+### Phase 3, cabi wire envelope (TCP + HTTP)
 
 New `crates/wombatkv-daemon/src/envelope.rs` module: 16-byte universal
 envelope (magic 'WMBT' + version u32 LE + crc32c u32 LE + len u32 LE)
@@ -599,7 +599,7 @@ and 1 MB bodies). Both sync server tests and compio-TPC concurrent-
 client (8 clients × 25 requests = 200 ops) keep-alive pipelined (50
 sequential pings) tests pass through the new wire envelope.
 
-### Phase 6 — DST transport-layer chaos surface
+### Phase 6: DST transport-layer chaos surface
 
 3 new fault classes in `wombatkv-dst`: TransportConnectionDropMidRPC,
 TransportPartialReadOnHeader, TransportSlowWrite. Plus buggify
@@ -642,7 +642,7 @@ sweep capturing all 4 phases active.
 ### Perf
 
 mode_smoke daemon-http with `WMBT_KV_HTTP_TPC_THREADS=2` post-Phase-3
-wire envelope: **6.70× warm-restore speedup** (alpha.10 was 6.92× —
+wire envelope: **6.70× warm-restore speedup** (alpha.10 was 6.92× -
 within Metal scheduling noise envelope; envelope CRC32C cost is
 sub-percent at our payload sizes).
 
@@ -656,10 +656,10 @@ upgrading, no rolling upgrade.
 
 ---
 
-## v10 — HTTP TPC parity with TCP TPC + DST coverage extension
+## v10: HTTP TPC parity with TCP TPC + DST coverage extension
 
 The alpha.9 HTTP landing shipped `serve_http` at "alpha simple"
-std::net + thread-per-conn parity with `serve_tcp` only — the
+std::net + thread-per-conn parity with `serve_tcp` only, the
 compio TPC variant (`serve_tcp_compio_bridge`, the load-bearing
 production fast path under multi-engine load) had no HTTP analog.
 alpha.10 closes that gap.
@@ -684,12 +684,12 @@ Env gates (mirror TCP's):
 ### Correctness validation
 
 4 new unit tests in `wombatkv-daemon::http_transport`:
-- `http_tpc_ping_roundtrip` — basic TPC connectivity
-- `http_tpc_put_then_get_roundtrip` — PUT/GET roundtrip via TPC
-- `http_tpc_concurrent_clients_correctness` — 8 clients × 25
+- `http_tpc_ping_roundtrip`, basic TPC connectivity
+- `http_tpc_put_then_get_roundtrip`: PUT/GET roundtrip via TPC
+- `http_tpc_concurrent_clients_correctness`: 8 clients × 25
   requests = **200 concurrent ops, all verified correct** (the
   value-add test for TPC vs thread-per-conn)
-- `http_tpc_keep_alive_pipelined` — 50 sequential pings on one
+- `http_tpc_keep_alive_pipelined`: 50 sequential pings on one
   connection (validates accumulator-buffer drain logic)
 
 End-to-end with ds4: `mode_smoke.py daemon-http` with
@@ -705,7 +705,7 @@ baseline: 70/70 seeds × classes PASS at 10-seed sweep.
 
 The existing buggify call site in the SHM dispatch loop
 (wombatkv-daemon.rs:893) did NOT cover the TCP TPC or HTTP TPC
-paths — those both ferry through `DispatchHandle` via flume, never
+paths, those both ferry through `DispatchHandle` via flume, never
 hitting the SHM consumer. alpha.10 adds a buggify site inside the
 `spawn_dispatch_workers` worker-loop (where the actual dispatch
 closure runs), giving TCP TPC and HTTP TPC the same fault-injection
@@ -731,12 +731,12 @@ layer).
 
 For alpha.10 the claim is: **same DST coverage as TCP TPC + SHM,
 extended to HTTP TPC by adding one buggify site in the shared
-dispatch worker.** Not "rigorous transport-layer chaos testing" —
+dispatch worker.** Not "rigorous transport-layer chaos testing" -
 that's queued for the RFC 0018 branch.
 
 ---
 
-## v9 — daemon-http transport landing + 5-user multi-turn validation
+## v9, daemon-http transport landing + 5-user multi-turn validation
 
 Mode 5 (HTTP/1.1 + rkyv) ships alongside the rfc/0018 wire-storage-
 discipline branch. Mirrors the daemon-TCP rkyv envelope (same
@@ -748,7 +748,7 @@ dropping the prefix keeps the body starts at offset 0 so rkyv's
 8-byte alignment requirement is satisfied without a copy).
 
 The wire envelope discipline RFC 0018 calls for (magic + version +
-CRC + len) layers on later — for the M0 cut, daemon-http and
+CRC + len) layers on later, for the M0 cut, daemon-http and
 daemon-tcp share the bare-rkyv body that's been in the alpha
 breaking-window since alpha.6.
 
@@ -764,8 +764,8 @@ daemon-tcp pattern from alpha.7. M3 Max.
 
 ### Multi-user multi-turn (the headline alpha.9 validation)
 
-5 distinct user personas — alice (python), bob (recipe), carol
-(travel), dave (linear-algebra), eve (creative-writing) — each
+5 distinct user personas, alice (python), bob (recipe), carol
+(travel), dave (linear-algebra), eve (creative-writing), each
 running a 3-turn conversation with separate accumulated history,
 all against the same ds4-server process. Per-mode metrics: median
 turn-1 (cold) vs median turn-(2..N) (warm) latency across all 5
@@ -780,7 +780,7 @@ Result file:
 
 | mode | verdict | turn-1 med | later med | speedup | bucket | contamination | garbage |
 |---|---|---:|---:|---:|---:|---:|---:|
-| native      | PASS | 4955 ms  | 5526 ms | 0.90× | — | 0 | 0 |
+| native      | PASS | 4955 ms  | 5526 ms | 0.90× |: | 0 | 0 |
 | embedded    | PASS | 5786 ms  | 4545 ms | 1.27× | 29 | 0 | 0 |
 | daemon-shm  | PASS | 21593 ms | 7264 ms | 2.97× | 139 | 0 | 0 |
 | daemon-tcp  | PASS | 20006 ms | 4594 ms | 4.35× | 29 | 0 | 0 |
@@ -805,7 +805,7 @@ Investigation showed this was NOT a WombatKV bug:
    correct across every transport. See
    [`bench_data/logit_fidelity_alpha9_post_http.json`](../bench_data/logit_fidelity_alpha9_post_http.json).
 2. **Determinism**: 3 fresh daemon-shm-only re-runs of the same
-   multi-user prompts produced English in 3/3 — the original
+   multi-user prompts produced English in 3/3, the original
    Chinese was not reproducible.
 3. **Root cause**: DeepSeek-V4 enters THINKING mode by default for
    conversational prompts. With `max_tokens=48` the entire budget is
@@ -820,7 +820,7 @@ Investigation showed this was NOT a WombatKV bug:
 5. **Independent corroboration**: LLM-as-judge evaluation of
    `coherence_alpha9_post_http.json` rated all 4 WombatKV modes
    `EQUIVALENT` to native baseline (English fluency, reasoning,
-   absence of degenerate failure modes — see `scripts/llm_judge.py`).
+   absence of degenerate failure modes, see `scripts/llm_judge.py`).
 
 **Lesson**: When evaluating WombatKV with chat-completion harnesses,
 `max_tokens` must be large enough to fit thinking-mode preamble +
@@ -840,7 +840,7 @@ daemon RTT / SHM ring setup overhead that doesn't recur on later
 turns.
 
 For *cross-session* WombatKV restore (the cell-B story), use the
-`--restart-between-users` flag — it kills ds4-server + wipes the
+`--restart-between-users` flag, it kills ds4-server + wipes the
 local kvdir between users, forcing every warm-restore to come from
 S3 via the WombatKV substrate (no engine-local cache to help):
 
@@ -851,7 +851,7 @@ python3 scripts/scenarios/multi_user_multiturn.py --mode all \
 
 Bucket-count interpretation:
 - `embedded` (29), `daemon-tcp` (29), `daemon-http` (29): same
-  content-addressed dedupe behavior — 5 users × ~6 unique blocks
+  content-addressed dedupe behavior: 5 users × ~6 unique blocks
   per user after prefix dedup ≈ 29. Block-shaped surfaces work
   identically across these three transports.
 - `daemon-shm` (139): higher because the SHM daemon path writes one
@@ -880,12 +880,12 @@ The 212 (vs alpha.7's 208) reflects 4 new tests in
 get roundtrip, GET-ping returns 200, unknown-route returns 404.
 
 The 2 cabi tests that were stale (`abi_version_bumped_to_1_5_or_higher`,
-`abi_version_at_least_1_6`) — relics of pre-alpha 1.1..1.6 versioning
-that was consolidated to 1.0 — were rewritten to assert the alpha
+`abi_version_at_least_1_6`), relics of pre-alpha 1.1..1.6 versioning
+that was consolidated to 1.0, were rewritten to assert the alpha
 consolidation invariant (`ABI_MAJOR == 1`) rather than specific
 minor numbers.
 
-## CONTRIBUTING.md correctness suite — what was run
+## CONTRIBUTING.md correctness suite, what was run
 
 Mode 1 baseline (`./ds4_test --<flag>`):
 

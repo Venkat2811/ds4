@@ -8,7 +8,7 @@ each work coherently across every WombatKV transport mode.
 What it tests:
   * 5 personas with separate conversation histories and distinct
     system prompts so block-prefix sharing is per-user.
-  * 3 turns per user, history accumulates between turns — exercises
+  * 3 turns per user, history accumulates between turns, exercises
     the same prefix-extension pattern a real chat client uses.
   * Optional kill+restart of ds4-server between users → exercises
     *cross-session* WombatKV restore (the load-from-S3 path).
@@ -20,8 +20,8 @@ PASS criteria:
     * Every turn returns non-empty, English-ish text.
     * No turn produces obvious garbage (length, non-ASCII ratio).
     * Each user's turn-2 / turn-3 latency drops vs turn-1 in WombatKV
-      modes (warm restore engaged). Latency-drop threshold is soft —
-      INFORMATIONAL only — because Metal scheduling adds noise, but
+      modes (warm restore engaged). Latency-drop threshold is soft -
+      INFORMATIONAL only, because Metal scheduling adds noise, but
       total turn-1 vs turn-(2..N) median must be lower in WombatKV
       modes than in native.
   INFORMATIONAL:
@@ -89,7 +89,7 @@ USERS = [
         ),
         "turns": [
             "I have a function that returns None when I expected it to "
-            "return a dict — what's the most common cause?",
+            "return a dict, what's the most common cause?",
             "Once I fix that, what's the cleanest way to add type hints "
             "so this mistake gets caught before runtime?",
             "And how would I write a single pytest test that exercises "
@@ -108,7 +108,7 @@ USERS = [
             "method steps numbered. For each recipe note at least one "
             "common substitution if the user is missing an ingredient. "
             "When discussing techniques, prefer plain-language "
-            "descriptions over jargon — if you must use a technical term "
+            "descriptions over jargon, if you must use a technical term "
             "like 'emulsion' or 'maillard reaction,' define it briefly "
             "the first time. Always consider dietary constraints if the "
             "user has mentioned them earlier in the conversation. Avoid "
@@ -118,7 +118,7 @@ USERS = [
             "where ratios matter more than absolute quantities. Keep "
             "tone warm and encouraging. Mention storage and reheating "
             "advice for leftovers. Cite cuisine of origin where it adds "
-            "useful context — for example, that something is a Sichuan "
+            "useful context, for example, that something is a Sichuan "
             "dish or a Sicilian preparation. Don't over-explain "
             "obvious things like 'boil water in a pot.' End with one "
             "suggestion for a side dish or beverage pairing."
@@ -127,7 +127,7 @@ USERS = [
             "I have chicken thighs, an onion, and a can of coconut milk. "
             "What's a 30-minute recipe?",
             "I'm allergic to coconut. Can we adapt that with what I "
-            "have — chicken stock, cream, and tomato paste?",
+            "have, chicken stock, cream, and tomato paste?",
             "What's a starch I can serve with it that takes the same amount of time?",
         ],
     },
@@ -143,11 +143,11 @@ USERS = [
             "feasible. When suggesting destinations, mention the best "
             "season to visit and what weather to expect. When discussing "
             "logistics, give specific website or app names that travelers "
-            "use to book — for example, Trainline for European rail, "
+            "use to book, for example, Trainline for European rail, "
             "Rome2Rio for multi-modal route planning, Google Flights for "
             "fare research. Always note visa requirements when the user "
             "mentions their nationality or asks about a region with "
-            "restrictive entry rules. Keep cost estimates realistic — "
+            "restrictive entry rules. Keep cost estimates realistic: "
             "give a per-day range for budget, mid-range, and high-end "
             "travel. Mention local customs that affect daily interaction, "
             "like tipping conventions, dress codes for religious sites, "
@@ -184,7 +184,7 @@ USERS = [
             "directions that don't rotate; determinant is the signed "
             "volume scaling factor; rank is dimension of image). When "
             "the student is stuck, ask what they expect the answer to "
-            "look like — that often surfaces the misconception. Show "
+            "look like, that often surfaces the misconception. Show "
             "computations step by step rather than jumping to the final "
             "answer. When the student asks 'why is this true,' give a "
             "short proof sketch when one fits in three lines. Use "
@@ -196,7 +196,7 @@ USERS = [
             "me about the linear map it represents?",
             "If a 4x4 matrix has rank 2, what does that mean about the "
             "shape of its image?",
-            "How does that connect to eigenvalues — does rank 2 imply "
+            "How does that connect to eigenvalues, does rank 2 imply "
             "two non-zero eigenvalues?",
         ],
     },
@@ -210,18 +210,18 @@ USERS = [
             "focused on craft: voice, pacing, scene construction, "
             "interiority, dialogue, and sentence rhythm. You read for "
             "what the writer is trying to do and then help them do it "
-            "better — not impose your own taste. When critiquing an "
+            "better, not impose your own taste. When critiquing an "
             "opening, you check whether the first paragraph earns the "
             "reader's attention without front-loading exposition. When "
             "critiquing dialogue, you look for whether each line does "
-            "more than one thing — character, plot, subtext. When "
+            "more than one thing, character, plot, subtext. When "
             "critiquing pacing, you check scene-to-scene transitions "
             "and ask whether the writer is summarizing where they "
             "should dramatize, or vice versa. When the writer asks for "
             "structural feedback, you sketch the shape of the story "
             "(rising action, turning points, resolution) and identify "
             "which beats are missing or rushed. You quote specific "
-            "sentences when praising or critiquing — vague praise "
+            "sentences when praising or critiquing, vague praise "
             "doesn't help. You suggest line edits as examples, not as "
             "rules, and you make clear when something is a judgment "
             "call versus a craft error. You ask the writer what they "
@@ -230,7 +230,7 @@ USERS = [
         ),
         "turns": [
             "I'm writing a short story that opens with a character "
-            "waking up. I've heard that's a cliché — is it really?",
+            "waking up. I've heard that's a cliché, is it really?",
             "What's a way to open in medias res without burying the "
             "reader in confusing names and places?",
             "How do I balance dialogue and interiority in that kind of opening?",
@@ -241,14 +241,14 @@ USERS = [
 
 def _looks_like_garbage(text: str) -> tuple[bool, str]:
     """Catches the kind of corruption WombatKV warm-restore failures
-    produce — repeated short runes, control-char salads, empty output.
+    produce, repeated short runes, control-char salads, empty output.
     Does NOT flag legit non-English responses (DeepSeek occasionally
     answers in Chinese on creative-writing prompts; that's a model
     quirk, not a WombatKV bug)."""
     stripped = text.strip()
     if len(stripped) < 20:
         return True, f"too short ({len(stripped)} chars)"
-    # Letter-like characters — covers Latin, CJK, Cyrillic, Arabic, etc.
+    # Letter-like characters, covers Latin, CJK, Cyrillic, Arabic, etc.
     # rather than just ASCII so multilingual replies don't false-fire.
     letters = sum(1 for c in text if c.isalpha())
     if letters < 15:
@@ -269,7 +269,7 @@ def _send_chat(history: list[dict]) -> tuple[float, str]:
     `max_tokens=256` is large enough to fit DeepSeek-V4's THINKING mode
     preamble plus a meaningful visible answer. With a tighter budget
     (e.g. 48), THINKING mode consumes the entire budget on internal
-    reasoning and the visible answer never starts — and worse, the
+    reasoning and the visible answer never starts, and worse, the
     THINKING content occasionally surfaces in Chinese for creative-
     writing prompts (a model quirk, not a WombatKV bug). 256 gives
     enough headroom that the answer actually appears in every case
@@ -388,7 +388,7 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
                 ms.log(f"  restarting ds4-server before next user")
                 ms.kill_all_ds4()
                 # Wipe the engine-local kvdir so the next user can't get
-                # a free warm path from ds4's own huge-blob cache —
+                # a free warm path from ds4's own huge-blob cache -
                 # forces all warm-restore wins to come from WombatKV.
                 if kvdir.exists():
                     shutil.rmtree(kvdir)
@@ -414,7 +414,7 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
         # Cross-user contamination check: does user A's response on
         # their first turn mention user B's topic word? Use lowercased
         # comparison + word boundary to avoid false-positives (e.g.
-        # "python" appearing inside "polyethylene" — unlikely but safe).
+        # "python" appearing inside "polyethylene", unlikely but safe).
         contamination = []
         for u_a in user_records:
             for u_b in user_records:
@@ -448,7 +448,7 @@ def run_mode(mode: str, restart_between_users: bool) -> dict:
         if mode != "native":
             if bucket_counts and bucket_counts[-1] == 0:
                 notes.append(
-                    "bucket empty after all users — WombatKV did not write blocks"
+                    "bucket empty after all users. WombatKV did not write blocks"
                 )
             if (
                 "intra_user_speedup" in latency_stats
@@ -515,7 +515,7 @@ def main() -> int:
 
     if not ms.DS4_BIN.exists():
         print(
-            f"ERROR: {ms.DS4_BIN} not found — build ds4-server first", file=sys.stderr
+            f"ERROR: {ms.DS4_BIN} not found, build ds4-server first", file=sys.stderr
         )
         return 2
 
@@ -526,7 +526,7 @@ def main() -> int:
     )
     if any(m.startswith("daemon-") for m in modes) and not ms.DAEMON_BIN.exists():
         print(
-            f"ERROR: {ms.DAEMON_BIN} not found — build wombatkv-daemon first",
+            f"ERROR: {ms.DAEMON_BIN} not found, build wombatkv-daemon first",
             file=sys.stderr,
         )
         return 2
@@ -558,8 +558,8 @@ def main() -> int:
             continue
         ls = r.get("latency_stats", {})
         bc = r.get("bucket_counts_after_each_user", [])
-        bc_str = str(bc[-1]) if bc else "—"
-        speedup = ls.get("intra_user_speedup", "—")
+        bc_str = str(bc[-1]) if bc else "-"
+        speedup = ls.get("intra_user_speedup", "-")
         notes = "; ".join(r.get("notes", [])) or "(none)"
         print(
             f"{r['mode']:<14} {r['verdict']:<8} {ls.get('turn1_median_ms', 0):<13} "

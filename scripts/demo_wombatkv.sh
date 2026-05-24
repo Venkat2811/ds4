@@ -1,9 +1,9 @@
 #!/bin/bash
-# WombatKV 0.1.0-alpha — one-command POC demo
+# WombatKV 0.1.0-alpha, one-command POC demo
 #
 # Demonstrates: ds4 + WombatKV S3-backed KV substrate beats ds4-native local-only
 # by 100-200x on cross-process restart scenarios. Same hardware, same model,
-# same prompt — the only difference is whether ds4 has a persistent intelligent
+# same prompt, the only difference is whether ds4 has a persistent intelligent
 # KV substrate underneath.
 #
 # Requirements:
@@ -116,12 +116,12 @@ run_demo() {
 }
 
 echo "==============================================="
-echo "  WombatKV 0.1.0-alpha — POC demo"
+echo "  WombatKV 0.1.0-alpha: POC demo"
 echo "  Tests: ds4-native vs ds4 + WombatKV"
 echo "  Scenario: same prompt twice, restart between turns"
 echo "==============================================="
 
-run_demo native   "ds4-native (no WombatKV — local disk only)"
+run_demo native   "ds4-native (no WombatKV, local disk only)"
 run_demo wombatkv "ds4 + WombatKV (S3-backed substrate)"
 
 echo
@@ -132,7 +132,7 @@ echo "    ds4+WombatKV turn 2: ~50-150 ms (S3 hit, instant warm restore)"
 echo "    Speedup: 50-200x"
 echo "  What WombatKV provides (defaults-on in 0.1.0-alpha):"
 echo "    - object-storage-native prefix-share blocks across processes"
-echo "    - trailing-token cache — partial block at session end is preserved, so reload skips re-prefilling those tokens"
+echo "    - trailing-token cache, partial block at session end is preserved, so reload skips re-prefilling those tokens"
 echo "    - SlateDB-backed world-knowledge index"
 echo "    - zstd block compression"
 echo "    - background prefetch worker"

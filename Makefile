@@ -21,7 +21,7 @@ LDLIBS ?= -lm -pthread
 # vs the vanilla path.
 #
 # Runtime dylib search: we DO NOT bake the build-time WOMBATKV_LIB path
-# into the binary (that was a deployment landmine — moving the dylib
+# into the binary (that was a deployment landmine, moving the dylib
 # at deploy time crashed ds4-server with "dyld: Library not loaded").
 # Instead we use:
 #   - macOS: @loader_path/../lib (preferred) AND $(WOMBATKV_LIB) as fallback
@@ -39,7 +39,7 @@ WOMBATKV_INC := $(WOMBATKV_DIR)/crates/wombatkv-cabi/include
 WOMBATKV_LIB := $(WOMBATKV_DIR)/target/release
 CFLAGS  += -DDS4_WOMBATKV -I$(WOMBATKV_INC)
 ifeq ($(UNAME_S),Darwin)
-# macOS: dual rpath — first @loader_path/../lib for deployment, then
+# macOS: dual rpath, first @loader_path/../lib for deployment, then
 # the build-time path for in-tree dev (cargo build + immediate run).
 LDLIBS  += -L$(WOMBATKV_LIB) -lwombatkv -Wl,-rpath,@loader_path/../lib -Wl,-rpath,$(WOMBATKV_LIB)
 else

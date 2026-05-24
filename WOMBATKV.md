@@ -23,7 +23,7 @@ ds4-native cold-prefill on the same prompt after a process restart.
 |---|---:|---:|---:|
 | 1.7k-token prompt, cross-restart, kvdisk wiped | 7929 ms | **108 ms** | **73.1×** |
 | Multi-conv 5×5, ~9.7k-token shared doc (cross-conversation prefix-share) | 110 535 ms | **1883 ms** | **58.7×** |
-| WombatKV-warm TTFT floor (clean S3 run) | — | **99 ms** | up to **82.7×** |
+| WombatKV-warm TTFT floor (clean S3 run) |: | **99 ms** | up to **82.7×** |
 
 See `docs/MODE_VALIDATION.md` for the full mode matrix + verification
 procedures.
@@ -80,7 +80,7 @@ python3 scripts/mode_smoke.py all
 python3 scripts/mode_smoke.py daemon-tcp-remote --remote-tcp host:port
 ```
 
-`scripts/mode_smoke.py` is the canonical "did this work?" gate — two-turn
+`scripts/mode_smoke.py` is the canonical "did this work?" gate, two-turn
 cell-B pattern, restart between turns, verifies turn-2 restores KV from
 WombatKV instead of cold-prefilling.
 
@@ -102,26 +102,26 @@ are wombatkv-side and use the `WMBT_KV_*` prefix. See wombatkv's
 All WombatKV-related ds4 modifications are gated behind `#ifdef DS4_WOMBATKV`.
 Source modifications:
 
-- **`ds4_server.c`** — `wmbt_kv_init_hooks()` (lines ~130-260): mode
+- **`ds4_server.c`**: `wmbt_kv_init_hooks()` (lines ~130-260): mode
   selection from env, opens the WombatKV handle. All `wmbt_kv_*` calls in
   the server hot paths are `#ifdef`-gated.
-- **`ds4.c`** — the CRC32C trio (`ds4_crc32c_init_state / _update / _finalize`)
+- **`ds4.c`**, the CRC32C trio (`ds4_crc32c_init_state / _update / _finalize`)
   routes through `wmbt_kv_crc32c_append` in `DS4_WOMBATKV` builds (hardware
   acceleration via libwombatkv's `crc32c` Rust crate runtime dispatch).
   Pure-ds4 builds keep the original software-table impl byte-for-byte
   unchanged.
-- **`ds4_kvstore.c`** — block-prefix save/load helpers that call the
+- **`ds4_kvstore.c`**, block-prefix save/load helpers that call the
   `wmbt_kv_get_kv_blocks_borrowed` / `wmbt_kv_put_kv_blocks` C ABI.
-- **`Makefile`** — `WOMBATKV=1 WOMBATKV_DIR=<path>` adds `-DDS4_WOMBATKV` +
+- **`Makefile`**: `WOMBATKV=1 WOMBATKV_DIR=<path>` adds `-DDS4_WOMBATKV` +
   `-I.../wombatkv-cabi/include` + `-L.../target/release -lwombatkv` + rpath.
 
 The default ds4 build (no `WOMBATKV=1`) doesn't compile any of this in.
 
 ## Walkthroughs
 
-- `docs/MODE_VALIDATION.md` — full mode-matrix validation procedures + the
+- `docs/MODE_VALIDATION.md`, full mode-matrix validation procedures + the
   expected verification signals per mode.
-- `docs/demo_pi_ds4_wombatkv.md` — enabling WombatKV under
+- `docs/demo_pi_ds4_wombatkv.md`, enabling WombatKV under
   [pi-ds4](https://github.com/mitsuhiko/pi-ds4) without forking that plugin.
 
 ## Status
@@ -133,7 +133,7 @@ WombatKV alpha.14-prep, validated on:
 - DST harness (17 failure classes) passing seeded sweeps
 
 Wire format, on-disk envelopes, and C ABI are in the alpha breaking window
-— changes can land without back-compat shims until the OSS tag. After that,
+changes can land without back-compat shims until the OSS tag. After that,
 breaking changes follow standard semver.
 
 ## Reporting issues

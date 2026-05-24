@@ -9214,7 +9214,7 @@ static int wmbt_kv_try_load_blocks(server *s,
     if (loaded_path_out) {
         char hint[96];
         snprintf(hint, sizeof(hint),
-                 "wmbt_kv-blocks=%zu/bt=%d%s",
+                 "wombatkv-blocks=%zu/bt=%d%s",
                  matched, block_tokens,
                  warm_tail_restored ? "/warm_tail" : "");
         *loaded_path_out = xstrdup(hint);

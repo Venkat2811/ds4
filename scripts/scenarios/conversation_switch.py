@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WombatKV showcase scenario — `conversation_switch`: tests the regime that
+"""WombatKV showcase scenario: `conversation_switch`: tests the regime that
 ds4's README:602-605 makes explicit:
 
     "ds4-server first tries the cheap exact token-prefix check, then falls back
@@ -10,18 +10,18 @@ ds4's README:602-605 makes explicit:
 ds4 holds ONE session in RAM at a time. Switching to a different session forces
 either a disk read of that session's `.kv` file (if previously seen) or a cold
 prefill (if not). WombatKV's foyer is a separate RAM-resident substrate cache
-that can hold N sessions hot simultaneously — no swap thrashing.
+that can hold N sessions hot simultaneously, no swap thrashing.
 
 This bench measures the per-switch latency:
 
   - N=5 distinct users, each with their own UNIQUE ~1500-token system prompt
-    (so ds4 cannot prefix-match across users — every switch is a true mismatch
+    (so ds4 cannot prefix-match across users, every switch is a true mismatch
     against the in-RAM checkpoint).
   - Each user runs 5 turns.
   - Order is deterministic round-robin: u1.t1, u2.t1, ..., u5.t1, u1.t2, ...
     so the request *before* every (uK, tN) is from a DIFFERENT user.
   - Trial 1 = cold across the board (first time every user is seen).
-  - Trial 2 = warm — c1_native must read from disk on every switch;
+  - Trial 2 = warm, c1_native must read from disk on every switch;
     c2_embedded should hit foyer in RAM; c3_daemon should hit daemon foyer.
 
 Expected outcome (predicted, hence "the 5th honest win" in checklist §2.3):
@@ -49,7 +49,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import demo_showcase_lib as lib
 
 # -----------------------------------------------------------------------------
-# Restart / wipe knobs — mirror pi_review.py so the bench composes with the
+# Restart / wipe knobs, mirror pi_review.py so the bench composes with the
 # same RFC 0010 §5.3 cross-restart matrix.
 # -----------------------------------------------------------------------------
 RESTART_BETWEEN_TRIALS = os.environ.get("RESTART_BETWEEN_TRIALS", "0") == "1"
@@ -70,7 +70,7 @@ PORT = lib.SHOWCASE_PORTS[0]
 def _user_system_prompt(user_idx):
     """Produce a UNIQUE ~1500-token system prompt for each user. The
     per-user phrasing differs enough that ds4 cannot prefix-match across
-    users — every switch is a true in-RAM mismatch.
+    users, every switch is a true in-RAM mismatch.
     """
     # Each user gets a different role + style + tag string interspersed
     # throughout the prompt to force per-user-unique tokens.
@@ -153,7 +153,7 @@ def _user_system_prompt(user_idx):
     )
 
 
-# 5 different ~500-char code-like snippets — same as pi_review.py.
+# 5 different ~500-char code-like snippets, same as pi_review.py.
 def _load_code_snippets():
     if not lib.PROMPT_FILE.exists():
         raise FileNotFoundError(f"showcase needs {lib.PROMPT_FILE}")
@@ -186,7 +186,7 @@ def _initial_prompt(snippet):
 
 
 # -----------------------------------------------------------------------------
-# Per-user state — keeps each user's prior conversation so turn N sees the
+# Per-user state, keeps each user's prior conversation so turn N sees the
 # accumulated history (the prior turns matter for ds4's prefix-match check).
 # -----------------------------------------------------------------------------
 
@@ -289,7 +289,7 @@ def run_mode(mode, outdir, trials):
                     if turn == 1 and user_idx == 0:
                         metrics["switch_from"] = None
                     elif user_idx == 0:
-                        # First user of a new turn cycle — predecessor was last user of prior turn.
+                        # First user of a new turn cycle, predecessor was last user of prior turn.
                         metrics["switch_from"] = NUM_USERS
                     else:
                         metrics["switch_from"] = user_idx

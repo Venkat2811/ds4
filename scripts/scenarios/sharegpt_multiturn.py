@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""WombatKV showcase scenario 2 — `sharegpt_multiturn`: real conversations.
+"""WombatKV showcase scenario 2: `sharegpt_multiturn`: real conversations.
 
 Three sequential multi-turn conversations on a single ds4-server. Each
 conversation has 5-7 turns on a different topic. Within a conversation, the
-history grows turn-by-turn; the full prior history is re-sent each turn —
+history grows turn-by-turn; the full prior history is re-sent each turn -
 this is exactly what a chat client does.
 
 Modes (same as pi_review):
@@ -50,7 +50,7 @@ CONVERSATIONS = [
             "Windows-1252 but 0.27 for ISO-8859-1. The file has em-dashes "
             "and curly quotes. Is the chardet confidence reliable here or "
             "should I look at the bytes directly?",
-            "Good — I'll switch to charset_normalizer. But I also see "
+            "Good: I'll switch to charset_normalizer. But I also see "
             "occasional rows that pandas thinks have 17 columns when the "
             "header has 16. Tipped me off there's a stray semicolon. Do I "
             "need a custom dialect or can I tell pandas to be lenient about "
@@ -63,7 +63,7 @@ CONVERSATIONS = [
             "takes 4× longer on the GitHub Actions Linux runner than on my "
             "M3 Mac. Both have 16 GB RAM. What are the usual suspects when "
             "pandas IO is unexpectedly slow on CI specifically?",
-            "Interesting — the runners are using ephemeral SSDs over the "
+            "Interesting, the runners are using ephemeral SSDs over the "
             "network. So I should pre-stage the file to /tmp first and read "
             "from there. Got it. Thanks for the systematic walk-through.",
         ],
@@ -71,28 +71,28 @@ CONVERSATIONS = [
     {
         "name": "recipe_recommendation",
         "turns": [
-            "I have a bunch of leftover roasted vegetables in the fridge — "
+            "I have a bunch of leftover roasted vegetables in the fridge: "
             "carrots, parsnips, brussels sprouts, and a half head of "
             "cauliflower. I'd like to use them in something tonight that "
             "isn't just 'reheated leftovers'. What would you make?",
             "I have eggs and feta. Will a frittata work even if the "
             "vegetables are already pretty caramelized? I'm worried they'll "
             "go mushy from the second cook. How would you handle that?",
-            "Got it — low oven, short time, finish under broiler. What's "
+            "Got it, low oven, short time, finish under broiler. What's "
             "the right egg-to-vegetable ratio for a 10-inch cast iron pan, "
             "and should I add any dairy beyond the feta? I have heavy cream "
             "and milk but not crème fraîche.",
-            "I'd actually like to skip the cream and just use the milk — "
+            "I'd actually like to skip the cream and just use the milk: "
             "less rich. Will that hurt the texture much? Also: any herbs "
             "you'd add or skip given the caramelized-vegetable starting "
             "point? I have dried thyme and fresh parsley.",
-            "Sounds great. One last detail — what salad on the side? "
+            "Sounds great. One last detail, what salad on the side? "
             "Something quick and bright to balance the egg-richness. I "
             "don't want to do another oven dish. Bonus points if it uses "
             "things most people already have in the fridge.",
             "Perfect. Plan locked in: frittata + shaved fennel salad with "
             "lemon. Thanks for thinking through the texture tradeoff with "
-            "me — I would have probably overcooked the vegetables.",
+            "me: I would have probably overcooked the vegetables.",
         ],
     },
     {
@@ -111,7 +111,7 @@ CONVERSATIONS = [
             "Rossio, right? What time should we leave Lisbon to avoid "
             "the worst crowds, and is it sane to do the gardens in "
             "sneakers or do I need actual hiking shoes?",
-            "Great. Switching to Porto — we're going to take the Alfa "
+            "Great. Switching to Porto, we're going to take the Alfa "
             "Pendular. We like natural wine. Where would you eat the "
             "two nights we're there, and is the port-cellar tour in Vila "
             "Nova de Gaia worth doing once even if we don't drink fortified "
@@ -120,7 +120,7 @@ CONVERSATIONS = [
             "you'd specifically book the hotel in for Porto? We want "
             "walkable to dinner spots but not on the tourist drag. We don't "
             "drive so river-adjacent but quiet is the ideal.",
-            "Cedofeita it is. Thanks for the back-and-forth — this is the "
+            "Cedofeita it is. Thanks for the back-and-forth, this is the "
             "most planning we've done in one sitting in months. We'll book "
             "tonight.",
         ],

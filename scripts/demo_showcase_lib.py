@@ -26,7 +26,7 @@ import time
 # Static config
 # -----------------------------------------------------------------------------
 
-# DS4 fork repo root — defaults to the parent of this scripts/ directory
+# DS4 fork repo root, defaults to the parent of this scripts/ directory
 # (so `python3 ds4/scripts/scenarios/...` "just works" from a fresh clone).
 # Override with DS4_DIR=... in the environment.
 DS4_DIR = pathlib.Path(os.environ.get("DS4_DIR", pathlib.Path(__file__).resolve().parents[1]))
@@ -359,7 +359,7 @@ def build_messages(
 
 
 def wipe(*paths):
-    """Mirrors run_5mode_bench.wipe — remove + recreate dirs."""
+    """Mirrors run_5mode_bench.wipe, remove + recreate dirs."""
     for p in paths:
         shutil.rmtree(p, ignore_errors=True)
         pathlib.Path(p).mkdir(parents=True, exist_ok=True)

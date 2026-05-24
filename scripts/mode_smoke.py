@@ -72,7 +72,7 @@ _PROMPT_CHARS = int(os.environ.get("MODE_SMOKE_PROMPT_CHARS", "5000"))
 
 def _coherence(text1: str, text2: str) -> dict:
     """Cheap text-space proxy for "do these two outputs talk about the
-    same thing?" — used as a soft WombatKV-restore sanity gate.
+    same thing?", used as a soft WombatKV-restore sanity gate.
 
     Returns:
       lcp_chars     longest common prefix length (in chars)
@@ -81,7 +81,7 @@ def _coherence(text1: str, text2: str) -> dict:
                     stopwords like "the", "and", "to" that match by chance.
 
     Why not strict equality: temp=0 argmax decoding is still subject to
-    Metal scheduling noise — near-tied logits can flip across runs of
+    Metal scheduling noise, near-tied logits can flip across runs of
     the same prompt. Even native (no WombatKV) shows this. So we want a
     threshold that catches "WombatKV restore produced garbage" without
     false-firing on token-level noise."""
@@ -127,7 +127,7 @@ def wipe_bucket(bucket: str) -> None:
         import boto3
     except ImportError:
         log(
-            "  (boto3 not installed; skipping bucket wipe — mode smoke can still proceed)"
+            "  (boto3 not installed; skipping bucket wipe, mode smoke can still proceed)"
         )
         return
     s3 = boto3.client(
@@ -436,7 +436,7 @@ def run_mode(mode: str) -> dict:
     # Daemon modes: the daemon owns S3 → bucket = wombatkv-smoke-<prefix>
     # where <prefix> is the daemon's WMBT_KV_BUCKET suffix set in
     # start_daemon ("smoke-shm" or "smoke-tcp"). For daemon-tcp-remote
-    # the bucket lives on the REMOTE host's S3 endpoint — we don't try
+    # the bucket lives on the REMOTE host's S3 endpoint, we don't try
     # to wipe it from here.
     if mode == "embedded":
         wipe_bucket("wombatkv-smoke-embedded")
@@ -456,12 +456,12 @@ def run_mode(mode: str) -> dict:
             log(f"  starting wombatkv-daemon (TCP 127.0.0.1:{TCP_PORT})")
             daemon_proc = start_daemon("tcp", "smoke-tcp", daemonlog, daemon_puffer)
         elif server_mode == "daemon-tcp-remote":
-            log(f"  remote daemon expected at {REMOTE_TCP_ADDR} — no local start")
+            log(f"  remote daemon expected at {REMOTE_TCP_ADDR}, no local start")
         elif server_mode == "daemon-http":
             log(f"  starting wombatkv-daemon (HTTP 127.0.0.1:{HTTP_PORT})")
             daemon_proc = start_daemon("http", "smoke-http", daemonlog, daemon_puffer)
         elif server_mode == "daemon-http-remote":
-            log(f"  remote daemon expected at {REMOTE_HTTP_ADDR} — no local start")
+            log(f"  remote daemon expected at {REMOTE_HTTP_ADDR}, no local start")
 
         log("  starting ds4-server")
         start_server(server_mode, kvdir, puffer, serverlog)
@@ -500,7 +500,7 @@ def run_mode(mode: str) -> dict:
             bucket_keys = list_bucket_keys(bucket)
             log(f"    bucket {bucket}: {len(bucket_keys)} object(s)")
         elif mode in ("daemon-tcp-remote", "daemon-http-remote"):
-            log("    bucket on remote host's S3 — not inspecting from here")
+            log("    bucket on remote host's S3, not inspecting from here")
 
         # Server log signal: did WombatKV engage?
         srv_text = serverlog.read_text() if serverlog.exists() else ""
@@ -518,7 +518,7 @@ def run_mode(mode: str) -> dict:
         # Coherence: how much do turn-1 and turn-2 outputs share?
         # WombatKV fidelity claim is K/V byte-equivalence between
         # warm restore and cold compute. In text space we can't get
-        # strict equality — temp=0 argmax flips on near-tied logits
+        # strict equality, temp=0 argmax flips on near-tied logits
         # mean even runs with identical inputs can diverge a few
         # tokens in. So this is INFORMATIONAL not strictly asserted.
         # The thresholds below catch "WombatKV returned garbage"
@@ -543,15 +543,15 @@ def run_mode(mode: str) -> dict:
                 "daemon-http-remote",
             ):
                 notes.append("bucket empty (WombatKV did not write any blocks)")
-                # don't fail on this alone — short prompt may not trigger block write
+                # don't fail on this alone, short prompt may not trigger block write
             if t2 > t1 * 0.9:
                 notes.append(
-                    f"turn-2 not faster than turn-1 ({t2 * 1000:.0f} vs {t1 * 1000:.0f} ms) — warm restore may not have engaged"
+                    f"turn-2 not faster than turn-1 ({t2 * 1000:.0f} vs {t1 * 1000:.0f} ms), warm restore may not have engaged"
                 )
-            # Coherence soft check (don't FAIL on it — log + note for review)
+            # Coherence soft check (don't FAIL on it, log + note for review)
             if coh["shared_words"] < 3:
                 notes.append(
-                    f"coherence weak: only {coh['shared_words']} shared word(s) between turn-1 and turn-2 — "
+                    f"coherence weak: only {coh['shared_words']} shared word(s) between turn-1 and turn-2: "
                     f"could be Metal sampling noise or could be a real WombatKV-restore corruption"
                 )
 
@@ -615,13 +615,13 @@ def main() -> int:
     args = p.parse_args()
 
     if not DS4_BIN.exists():
-        log(f"ERROR: {DS4_BIN} does not exist — build ds4-server first")
+        log(f"ERROR: {DS4_BIN} does not exist, build ds4-server first")
         return 1
     if (
         args.mode in ("daemon-shm", "daemon-tcp", "daemon-http", "all")
         and not DAEMON_BIN.exists()
     ):
-        log(f"ERROR: {DAEMON_BIN} does not exist — build wombatkv-daemon first")
+        log(f"ERROR: {DAEMON_BIN} does not exist, build wombatkv-daemon first")
         return 1
     if args.mode == "daemon-tcp-remote":
         if not args.remote_tcp:

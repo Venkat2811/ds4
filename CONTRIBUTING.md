@@ -153,13 +153,13 @@ The `ds4_test --kvblock` subtest registered in `tests/ds4_test.c`'s
 | `test_kvblock_validation` | block_tokens range validation (upstream-shape, pre-existing) |
 | `test_crc32c_known_vector` | CRC32C polynomial sanity (alpha.11+; see RFC 0018 §13 C4) |
 | `test_kvblock_cpu_roundtrip` | block save/load_blocks round-trip (upstream-shape) |
-| `test_kvblock_raw_tail_sidecar_roundtrip` | sidecar save + magic check (alpha.7+) |
-| `test_kvblock_raw_tail_v4_corruption_rejected` | RFC 0018 Phase 1 — v4 sidecar envelope rejects bad CRC / bad version / bad magic / truncation (alpha.11+) |
-| `test_kvblock_block_v2_corruption_rejected` | RFC 0018 Phase 2 — v2 block envelope rejects bad CRC / bad version (alpha.11+) |
+| `test_kvblock_raw_tail_sidecar_roundtrip` | sidecar save + magic check |
+| `test_kvblock_raw_tail_v4_corruption_rejected` | RFC 0018 Phase 1, v4 sidecar envelope rejects bad CRC / bad version / bad magic / truncation |
+| `test_kvblock_block_v2_corruption_rejected` | RFC 0018 Phase 2, v2 block envelope rejects bad CRC / bad version |
 
 Run them with: `./ds4_test --kvblock` (after `make ds4_test
 WOMBATKV=1 WOMBATKV_DIR=<path>`). The corruption rejection tests are
-the "this CRC actually catches things" proof — without them we'd have
+the "this CRC actually catches things" proof, without them we'd have
 CRC computation but no proof it gates.
 
 ### New harnesses (no upstream analog)
@@ -193,7 +193,7 @@ python3 scripts/scenarios/multi_user_multiturn.py --mode all \
     --output /tmp/multi-user-results.json
 
 # Cross-session restore stress (kills+restarts ds4-server between
-# users — exercises the load-from-S3 path explicitly):
+# users, exercises the load-from-S3 path explicitly):
 python3 scripts/scenarios/multi_user_multiturn.py --mode all \
     --restart-between-users
 ```
@@ -237,18 +237,18 @@ What each harness proves:
 If you only have time for one, `mode_smoke.py all` is the right
 broad spot-check. If your change touches the K/V tensor layout
 (layer counts, head dim, compressor ratios), also run
-`logit_fidelity_test.py` — it's the test that caught the v5/v7 →
+`logit_fidelity_test.py`, it's the test that caught the v5/v7 →
 v8 partial-tail / compressor-state gap. If your change touches an
 on-disk format (sidecar / block) or wire envelope, run
 `ds4_test --kvblock` for the C-side corruption-rejection proof and
 `cargo test --workspace --lib` for the Rust-side envelope proof.
 
 Cross-machine TCP (mode-4 cross-host) and HTTP (mode-5 cross-host)
-have remote-daemon variants — see docs/MODE_VALIDATION.md.
+have remote-daemon variants, see docs/MODE_VALIDATION.md.
 
 ### Test hooks (env-gated, off in production)
 
-`DS4_TEST_FORCE_WMBT_TAIL_FAIL=1` — forces the parallel-tail-fetch
+`DS4_TEST_FORCE_WMBT_TAIL_FAIL=1`, forces the parallel-tail-fetch
 path in `wmbt_kv_try_load_blocks` to skip `pthread_create` and fall
 through to the serial-fetch fallback (ds4_server.c:9595-9648). Used
 to exercise the rare "pthread_create failed" branch without process
@@ -264,7 +264,7 @@ DS4_TEST_FORCE_WMBT_TAIL_FAIL=1 \
   python3 scripts/mode_smoke.py daemon-shm
 ```
 
-Production code path is unchanged when the env var is unset — the
+Production code path is unchanged when the env var is unset, the
 hook is a single `getenv()` check at one site.
 
 ### Known testing gaps

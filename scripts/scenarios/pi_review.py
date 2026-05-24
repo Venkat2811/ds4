@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""WombatKV showcase scenario 1 — `pi_review`: the killer cell.
+"""WombatKV showcase scenario 1: `pi_review`: the killer cell.
 
 Five concurrent code-review agents share:
   - the SAME long (~1500-token) system prompt (style guide + ReAct preamble)
-  - 5 different code snippets (~500 tokens each — slices of /tmp/pg1184.txt)
+  - 5 different code snippets (~500 tokens each, slices of /tmp/pg1184.txt)
   - 5 turns per agent (initial review + 4 fixed follow-ups)
 
 Modes:
   c1_native:   5 ds4-servers, no WombatKV. Each agent is isolated. The shared
-               system prompt is re-prefilled on every (agent × turn) — 25 total
+               system prompt is re-prefilled on every (agent × turn): 25 total
                prefills.
   c2_embedded: 5 ds4-servers, each with WombatKV M0 embedded. All 5 share the
                SAME S3 bucket. Tier B SHOULD hit the shared system-prompt blocks
@@ -19,7 +19,7 @@ Modes:
 
 Why this is the killer cell:
   Native cost grows linearly with #agents × #turns (each must re-prefill the
-  shared prefix). WombatKV cost is bounded by the unique-prefix fraction —
+  shared prefix). WombatKV cost is bounded by the unique-prefix fraction -
   the long system prompt is prefilled ONCE on the first agent's turn 1 and
   reused by all 24 subsequent (agent, turn) combinations.
 
@@ -52,11 +52,11 @@ import demo_showcase_lib as lib
 #       their pi process on the SAME machine (persistent local disk).
 #       ds4-native reads .kv files from disk → fast warm restore.
 #       WombatKV reads foyer → fast warm restore.
-#       Both should be comparable here — this is the parity / honest case.
+#       Both should be comparable here, this is the parity / honest case.
 RESTART_BETWEEN_TRIALS = os.environ.get("RESTART_BETWEEN_TRIALS", "0") == "1"
 WIPE_LOCAL_BETWEEN_TRIALS = os.environ.get("WIPE_LOCAL_BETWEEN_TRIALS", "1") == "1"
 
-# Large-prefix mode — matches realistic pi-review on a real PR diff.
+# Large-prefix mode, matches realistic pi-review on a real PR diff.
 #   PI_REVIEW_LARGE_PREFIX=1 prepends a ~30k-token (≈120k char) shared PR-diff
 #   context to every agent's turn-1 prompt. All 5 agents see the SAME shared
 #   diff (the "code being reviewed"), plus their own small divergent snippet
@@ -64,7 +64,7 @@ WIPE_LOCAL_BETWEEN_TRIALS = os.environ.get("WIPE_LOCAL_BETWEEN_TRIALS", "1") == 
 #
 #   Default fixture (1500-token system prompt + 120-token per-agent snippet)
 #   produces 110× per-agent TTFT on cross-restart wiped (bench_data/2026-05-16_*).
-#   Large fixture predicted to bump this to 300-600× per-agent — ds4 cold prefill
+#   Large fixture predicted to bump this to 300-600× per-agent, ds4 cold prefill
 #   scales linearly with prefix length; WombatKV S3 restore is bounded by network
 #   + block count. Realistic pi-review shape.
 #
@@ -81,7 +81,7 @@ LARGE_PREFIX_BYTES = int(os.environ.get("PI_REVIEW_LARGE_PREFIX_BYTES", "120000"
 NUM_AGENTS = 5
 # pi.dev model: one ds4-server, N concurrent HTTP clients (pi processes lease
 # the single ds4 instance, subsequent pi sessions attach as HTTP clients).
-# This is what the killer cell tests — shared system-prompt blocks across all
+# This is what the killer cell tests, shared system-prompt blocks across all
 # 5 agents sharing the SAME ds4 RAM cache + WombatKV substrate.
 PORTS = [lib.SHOWCASE_PORTS[0]] * NUM_AGENTS  # all agents share :8000
 SCENARIO_TAG = "1a"  # used to build the short daemon prefix
@@ -90,7 +90,7 @@ SCENARIO_TAG = "1a"  # used to build the short daemon prefix
 #   - identical bytes used by all 5 agents (this is what Tier B matches on)
 #   - long enough to make a ds4 cold prefill actually feel the win
 #   - shape is "you are reviewer X, follow style Y, output JSON Z, ReAct
-#     preamble W". Not load-bearing as a prompt — the content is just a stable
+#     preamble W". Not load-bearing as a prompt, the content is just a stable
 #     prefix.
 SYSTEM_PROMPT = """You are a senior staff software engineer performing a careful code review.
 
@@ -141,7 +141,7 @@ ReAct preamble (think → act → observe → repeat):
 When you disagree with the author's framing in the PR description, say so
 plainly in the summary field; the team values dissent that is backed by code,
 not posture. When you praise something, be specific about which line and
-why — vague praise is noise.
+why, vague praise is noise.
 
 Reviewer name: senior-staff-reviewer-v1
 Style version: v3.1.4-with-react
@@ -149,7 +149,7 @@ Cutoff date: today's date
 """
 
 
-# 5 different ~500-char code-like snippets — slices of /tmp/pg1184.txt at
+# 5 different ~500-char code-like snippets, slices of /tmp/pg1184.txt at
 # spaced offsets. ds4 sees them as user-message content, so they become the
 # divergent-prefix region (per-agent unique). With Tier B block tokens at 128,
 # 500 chars ≈ ~120 tokens ≈ ~1 block boundary; these are short on purpose so
@@ -168,7 +168,7 @@ def _load_code_snippets():
 
 
 # Optional shared PR-diff context (LARGE_PREFIX mode). Returns the SAME bytes
-# for every agent — Tier B blocks dedupe it, so the cost is paid once. Default
+# for every agent. Tier B blocks dedupe it, so the cost is paid once. Default
 # is empty (small fixture).
 def _load_shared_pr_diff():
     if not LARGE_PREFIX:
@@ -197,7 +197,7 @@ FOLLOWUPS = [
 def _initial_prompt(snippet):
     shared_diff = _load_shared_pr_diff()
     if shared_diff:
-        # LARGE_PREFIX mode — shared ~30k-token PR diff prepended to every agent.
+        # LARGE_PREFIX mode, shared ~30k-token PR diff prepended to every agent.
         # The shared bytes hit Tier B once across all 5 agents; the small per-agent
         # snippet is the divergent tail. Matches realistic pi-review shape.
         return (
@@ -244,7 +244,7 @@ def run_one_agent(agent_idx, port, snippet, num_turns=5):
 
         # Append a placeholder assistant turn so subsequent turns see a stable
         # conversation history. (We do not need real model output for the
-        # bench — only the input-token prefix matters for cache reuse.)
+        # bench, only the input-token prefix matters for cache reuse.)
         prior.append((new_user, "(continuing)"))
 
     return results
@@ -268,7 +268,7 @@ def run_mode(mode, outdir, trials):
     bucket = f"wombatkv-showcase-{mode.replace('_', '-')}-pi-review".lower()
     lib.reset_minio_bucket(bucket)
 
-    # Single ds4 instance + single puffer/kvdisk pair — all 5 agents share via
+    # Single ds4 instance + single puffer/kvdisk pair, all 5 agents share via
     # concurrent HTTP. This matches pi.dev's per-PID lease model: first pi
     # spawns ds4, subsequent pi sessions attach as HTTP clients to the same
     # instance. WombatKV's value here is cross-restart durability + the
@@ -293,7 +293,7 @@ def run_mode(mode, outdir, trials):
             log_path=daemon_log,
         )
 
-    # Build the env once — reused on every server (re)start.
+    # Build the env once, reused on every server (re)start.
     env = lib.env_for_mode(
         mode,
         puffer_dir=puffer_dir,
@@ -319,7 +319,7 @@ def run_mode(mode, outdir, trials):
         # When RESTART_BETWEEN_TRIALS=1: between trials, kill ds4 + wipe local
         # kvdisk + local foyer (KEEP S3 bucket). This isolates ds4-native from
         # its in-RAM/disk cache, so the trial-2 measurement is "what can the
-        # substrate (or lack thereof) restore from scratch?" — the killer cell
+        # substrate (or lack thereof) restore from scratch?", the killer cell
         # per RFC 0010 §5.2.
         all_trial_results = []
         for trial in range(1, trials + 1):
@@ -359,9 +359,9 @@ def run_mode(mode, outdir, trials):
                 server_procs.remove(current_server)
                 if WIPE_LOCAL_BETWEEN_TRIALS:
                     lib.wipe(puffer_dir, kvdisk_dir)
-                # NOTE: do NOT wipe the S3 bucket — that's the substrate.
+                # NOTE: do NOT wipe the S3 bucket, that's the substrate.
                 # In c3_daemon mode the daemon keeps running with its own
-                # foyer (the substrate-side cache). That's intentional —
+                # foyer (the substrate-side cache). That's intentional -
                 # daemons stay up while clients come and go.
                 current_server = _start_server(trial_suffix=f"-after-trial{trial}")
                 server_procs.append(current_server)

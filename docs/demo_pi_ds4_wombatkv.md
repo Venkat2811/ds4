@@ -1,9 +1,9 @@
-# Pi + ds4 + WombatKV — no-fork demo walkthrough
+# Pi + ds4 + WombatKV, no-fork demo walkthrough
 
 This walkthrough enables WombatKV under the upstream
 [`mitsuhiko/pi-ds4`](https://github.com/mitsuhiko/pi-ds4) plugin **without
 forking it**. We use the plugin's existing `DS4_SERVER_BINARY` override plus
-shell env-var inheritance — Pi spawns whatever `ds4-server` you point it at,
+shell env-var inheritance. Pi spawns whatever `ds4-server` you point it at,
 and your env vars flow through.
 
 ## Why
@@ -14,7 +14,7 @@ setting one config field plus six env vars in their shell. No fork, no
 upstream-patch dance, no per-user build of ds4.
 
 The team multiplier: warm KV-blocks captured by one teammate's session are
-available to every other teammate hitting the same S3 bucket — so cold prefill
+available to every other teammate hitting the same S3 bucket, so cold prefill
 on a long shared prompt happens once across the team, not once per developer.
 
 ## Prerequisites
@@ -25,7 +25,7 @@ on a long shared prompt happens once across the team, not once per developer.
 - [`pi`](https://github.com/mitsuhiko/pi) CLI installed (`pi --version` works)
 - A DSV4-Flash IQ2XXS GGUF model file on disk
 
-## Step 1 — Build WombatKV-enabled `ds4-server`
+## Step 1. Build WombatKV-enabled `ds4-server`
 
 From the `ds4` repo with the `wombatkv` workspace checked out alongside:
 
@@ -44,7 +44,7 @@ symbols). Confirm with:
 You should see a `WombatKV 0.1.0-alpha` banner line on the first stderr
 output.
 
-## Step 2 — Install upstream `pi-ds4`
+## Step 2. Install upstream `pi-ds4`
 
 ```bash
 pi install https://github.com/mitsuhiko/pi-ds4
@@ -52,7 +52,7 @@ pi install https://github.com/mitsuhiko/pi-ds4
 
 This installs the plugin at `~/.pi/ds4/`. Do not fork it.
 
-## Step 3 — Point `pi-ds4` at the WombatKV-enabled binary
+## Step 3. Point `pi-ds4` at the WombatKV-enabled binary
 
 Edit `~/.pi/ds4/settings.json` and add the `DS4_SERVER_BINARY` field (create
 the file if it does not exist yet):
@@ -67,12 +67,12 @@ the file if it does not exist yet):
 That's the entire override. Pi will now spawn your binary instead of the
 default one, inheriting environment from the shell that runs `pi`.
 
-## Step 4 — Export one WombatKV env var, then run `pi`
+## Step 4. Export one WombatKV env var, then run `pi`
 
 In whatever shell you run `pi` from (or in `~/.zshrc` / `~/.bashrc`):
 
 ```bash
-# Required — flips ds4 to use WombatKV for KV save/restore
+# Required, flips ds4 to use WombatKV for KV save/restore
 export DS4_WOMBATKV_ENABLE=1
 ```
 
@@ -90,7 +90,7 @@ Everything else auto-resolves from sane defaults:
   then to the local-dev defaults (`minioadmin`). `WMBT_KV_S3_ACCESS_KEY` /
   `WMBT_KV_S3_SECRET_KEY` still win when set.
 - **Bucket** defaults to `wombatkv-cache-${USER}` if you don't set
-  `WMBT_KV_BUCKET` — the bucket name is logged at startup so you can pin it.
+  `WMBT_KV_BUCKET`, the bucket name is logged at startup so you can pin it.
 - **Model fingerprint** auto-derives from `sha1(model_path)[:24]` if you
   don't set `DS4_WOMBATKV_FINGERPRINT24`.
 - **Local puffer directory**, **namespace**, **compression** (zstd default),
@@ -122,14 +122,14 @@ on this doc to stay current.
 
 ## Troubleshooting
 
-- **Plugin still spawns the default binary** — check
+- **Plugin still spawns the default binary**, check
   `~/.pi/ds4/settings.json` is valid JSON and the `DS4_SERVER_BINARY`
   path is absolute and executable (`ls -l` it)
-- **No WombatKV banner in stderr** — your `ds4-server` was built without
+- **No WombatKV banner in stderr**, your `ds4-server` was built without
   `WOMBATKV=1`. Rebuild and re-link
-- **`S3 connect refused`** — MinIO is not running, or the endpoint URL
+- **`S3 connect refused`**. MinIO is not running, or the endpoint URL
   is wrong. `curl $WMBT_KV_S3_ENDPOINT` should return a non-empty
   response
-- **Mac SHM-name budget errors at startup** — daemon mode uses short
+- **Mac SHM-name budget errors at startup**, daemon mode uses short
   SHM names; if you set a `WMBT_KV_DAEMON_PREFIX` keep it under
   18 chars

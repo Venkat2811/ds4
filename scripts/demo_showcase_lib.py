@@ -13,6 +13,7 @@ Shared by every showcase scenario under scripts/scenarios/.
 
 import json
 import http.client
+import hashlib
 import os
 import pathlib
 import re
@@ -134,7 +135,16 @@ def env_for_mode(mode, *, puffer_dir, bucket, daemon_prefix=None):
 # -----------------------------------------------------------------------------
 
 
-def start_server(env, *, port, kvdisk, log_path, ctx=32768, boot_timeout=120):
+def start_server(
+    env,
+    *,
+    port,
+    kvdisk,
+    log_path,
+    ctx=32768,
+    boot_timeout=120,
+    enable_kvdisk=True,
+):
     """Start one ds4-server instance on `port`. Returns Popen handle.
 
     Mirrors run_5mode_bench.start(); the only addition is a per-port arg so we
@@ -148,15 +158,20 @@ def start_server(env, *, port, kvdisk, log_path, ctx=32768, boot_timeout=120):
         MODEL,
         "--ctx",
         str(ctx),
-        "--kv-disk-dir",
-        str(kvdisk),
-        "--kv-cache-min-tokens",
-        "256",
-        "--kv-disk-space-mb",
-        "16384",
         "--port",
         str(port),
     ]
+    if enable_kvdisk:
+        args.extend(
+            [
+                "--kv-disk-dir",
+                str(kvdisk),
+                "--kv-cache-min-tokens",
+                "256",
+                "--kv-disk-space-mb",
+                "16384",
+            ]
+        )
     lf = open(log_path, "wb")
     p = subprocess.Popen(
         args, cwd=str(DS4_DIR), env=env, stdout=lf, stderr=subprocess.STDOUT
@@ -292,6 +307,8 @@ def send_chat(port, messages, *, max_tokens=None, timeout_s=600):
 
     ttft_ms = None
     raw_bytes = bytearray()
+    text_parts = []
+    reasoning_parts = []
     while True:
         ch = r.read1(4096)
         if not ch:
@@ -303,7 +320,33 @@ def send_chat(port, messages, *, max_tokens=None, timeout_s=600):
     c.close()
 
     raw = raw_bytes.decode("utf-8", errors="replace")
+    for event in raw.split("\n\n"):
+        for line in event.splitlines():
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                obj = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            try:
+                delta = obj["choices"][0].get("delta", {}).get("content")
+            except Exception:
+                delta = None
+            if delta:
+                text_parts.append(delta)
+            try:
+                reasoning = obj["choices"][0].get("delta", {}).get("reasoning_content")
+            except Exception:
+                reasoning = None
+            if reasoning:
+                reasoning_parts.append(reasoning)
     cached = _scrape_cached_tokens(raw)
+    assistant_text = "".join(text_parts)
+    reasoning_text = "".join(reasoning_parts)
+    effective_text = assistant_text if assistant_text else reasoning_text
 
     return {
         "ttft_ms": ttft_ms,
@@ -311,6 +354,15 @@ def send_chat(port, messages, *, max_tokens=None, timeout_s=600):
         "input_chars": input_chars,
         "cached_tokens_seen": cached,
         "raw_chars": len(raw),
+        "response_text": effective_text,
+        "response_sha256": hashlib.sha256(effective_text.encode("utf-8")).hexdigest(),
+        "response_preview": effective_text[:160].replace("\n", "\\n"),
+        "response_chars": len(effective_text),
+        "assistant_text": assistant_text,
+        "assistant_chars": len(assistant_text),
+        "reasoning_text": reasoning_text,
+        "reasoning_chars": len(reasoning_text),
+        "response_kind": "assistant_content" if assistant_text else "reasoning_only",
     }
 
 
@@ -427,6 +479,9 @@ def short_daemon_prefix(scenario_tag, idx):
 def percentile(xs, q):
     if not xs:
         return float("nan")
+    q = float(q)
+    if 0.0 <= q <= 1.0:
+        q *= 100.0
     s = sorted(xs)
     k = max(0, min(len(s) - 1, int(round((q / 100.0) * (len(s) - 1)))))
     return s[k]

@@ -351,7 +351,7 @@ def run_mode(mode, outdir, trials):
                 "n_requests": len(per_request),
                 "all_ttfts_median": median(ttfts) if ttfts else None,
                 "switch_ttfts_median": median(switch_ttfts) if switch_ttfts else None,
-                "switch_ttfts_p95": lib.percentile(switch_ttfts, 0.95) if switch_ttfts else None,
+                "switch_ttfts_p95": lib.percentile(switch_ttfts, 95) if switch_ttfts else None,
                 "first_touch_ttfts_median": median(first_touch_ttfts) if first_touch_ttfts else None,
             }
         )

@@ -1125,6 +1125,7 @@ typedef struct {
     uint64_t n_tensors;
     uint64_t alignment;
     uint64_t tensor_data_pos;
+    uint64_t max_tensor_bytes;
 
     ds4_kv *kv;
     ds4_tensor *tensors;
@@ -1432,6 +1433,9 @@ static void parse_tensors(ds4_model *m, ds4_cursor *c) {
             (t->abs_offset > m->size || t->bytes > m->size - t->abs_offset))
         {
             ds4_die("tensor points outside GGUF file");
+        }
+        if (t->bytes > m->max_tensor_bytes) {
+            m->max_tensor_bytes = t->bytes;
         }
     }
 }
@@ -18044,7 +18048,8 @@ int ds4_engine_open(ds4_engine **out, const ds4_engine_options *opt) {
         if (!ds4_gpu_set_model_map_range(e->model.map,
                                            e->model.size,
                                            e->model.tensor_data_pos,
-                                           e->model.size - e->model.tensor_data_pos))
+                                           e->model.size - e->model.tensor_data_pos,
+                                           e->model.max_tensor_bytes))
         {
             fprintf(stderr,
                     "ds4: %s failed to map model views; aborting startup. "
@@ -18058,7 +18063,8 @@ int ds4_engine_open(ds4_engine **out, const ds4_engine_options *opt) {
             !ds4_gpu_set_model_map_range(e->mtp_model.map,
                                            e->mtp_model.size,
                                            e->mtp_model.tensor_data_pos,
-                                           e->mtp_model.size - e->mtp_model.tensor_data_pos))
+                                           e->mtp_model.size - e->mtp_model.tensor_data_pos,
+                                           e->mtp_model.max_tensor_bytes))
         {
             fprintf(stderr,
                     "ds4: %s failed to map MTP model views; aborting startup. "

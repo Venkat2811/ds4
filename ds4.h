@@ -188,13 +188,222 @@ bool ds4_engine_has_mtp(ds4_engine *e);
 int ds4_engine_mtp_draft_tokens(ds4_engine *e);
 const ds4_tokens *ds4_session_tokens(ds4_session *s);
 
-/* Disk KV cache payload helpers.  The server owns the outer file header and
- * policy; the engine owns the DS4-specific serialized graph state. */
+/* Disk KV payload helpers.  HTTP/agent code owns the outer file header and
+ * persistence policy; the engine owns the DS4-specific serialized graph state. */
 uint64_t ds4_session_payload_bytes(ds4_session *s);
 int ds4_session_save_payload(ds4_session *s, FILE *fp, char *err, size_t errlen);
 int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, char *err, size_t errlen);
 int ds4_session_save_snapshot(ds4_session *s, ds4_session_snapshot *snap, char *err, size_t errlen);
 int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, char *err, size_t errlen);
 void ds4_session_snapshot_free(ds4_session_snapshot *snap);
+
+/* ============================================================================
+ * Token-aligned KV blocks (RFC 0007 — KVBlock/0.1)
+ * ----------------------------------------------------------------------------
+ * Slice the session's KV state by token range. Used by WombatKV to store
+ * content-addressed token-aligned blocks on object storage, enabling
+ * prefix sharing across prompts that share token prefixes (the vLLM /
+ * SGLang / Dynamo block-cache pattern).
+ *
+ * IMPORTANT ALIGNMENT CONSTRAINT (per the audit of ds4.c:15988-16179
+ * + the per-layer compressor frontier semantics):
+ *   block_tokens = token_end - token_start  MUST satisfy:
+ *     - multiple of LCM(4, 128) = 128
+ *   (Original draft said {4..128 divisor-of-128 and multiple-of-4};
+ *    audit of save_payload's per-layer compressed-row emit logic
+ *    revealed that ratio-128 layers emit 1 row every 128 tokens,
+ *    so block_tokens < 128 yields 0 or fractional compressed rows
+ *    for those layers — would require shipping partial frontier
+ *    state per block. Deferred; require multiple-of-128 for now.)
+ *   → allowed values: {4, 8, 16, 32, 64, 128}.
+ * Using a misaligned block_tokens corrupts the compressor frontier state
+ * for one or more layers. The save/load entry points enforce this.
+ *
+ * Recommended default: block_tokens = 128 (the minimum aligned size).
+ * Allowed: any positive multiple of 128 up to 8192.
+ *
+ * These APIs are SKELETON DECLARATIONS as of the _kvblocks branch —
+ * implementation lands incrementally with associated tests. Callers
+ * should defer hard production reliance on them until the
+ * block-prefix path is marked stable in the WombatKV CHANGELOG.
+ *
+ * Server-side env vars (consumed by ds4_server, not the libds4 API):
+ *   WMBT_KV_BLOCK_TOKENS=<N>    block granularity (default 128; must
+ *                               be a positive multiple of 128).
+ * The world-knowledge bootstrap that lets the block-prefix engage on
+ * the FIRST request after a restart is unconditional in the
+ * WombatKV substrate — no env-gate.
+ * ============================================================================ */
+
+/* One block in a load batch. token_end is exclusive. */
+typedef struct ds4_block_handle {
+    int    token_start;     /* inclusive; aligned to block_tokens */
+    int    token_end;       /* exclusive; aligned to block_tokens */
+    FILE  *fp;              /* points to start of block body (after envelope header if any) */
+    size_t payload_bytes;   /* exact body bytes for this block */
+} ds4_block_handle;
+
+/* Save the KV state for exactly one block (tokens [token_start, token_end))
+ * into `fp` in the per-block body format (see RFC 0007 §3.2 / 5.4 and the
+ * inline wire-format documentation at `kvblock_save_block_cpu` in ds4.c).
+ *
+ * Preconditions:
+ *   - (token_end - token_start) must be a positive multiple of 128 (<=8192)
+ *   - token_start must be aligned to (token_end - token_start)
+ *   - token_end must be <= ds4_session_tokens(s)->len
+ *   - The session must have a valid checkpoint (a sync()/eval() has run)
+ *
+ * Implementation status:
+ *   - CPU backend: IMPLEMENTED. Writes per-layer compressed K/V (and indexer
+ *     K/V for ratio-4 layers) scoped to [token_start, token_end). Raw K/V
+ *     and compressor frontier state are intentionally omitted: load
+ *     regenerates raw KV via prefill, and block_tokens%128==0 guarantees
+ *     the frontier is empty at the boundary.
+ *   - Graph backend (Metal / CUDA): IMPLEMENTED. Same wire format as the
+ *     CPU path — bytes saved on either backend can be loaded on either
+ *     backend. Bounds rule: only compressed rows that the engine has
+ *     already committed (g->layer_n_comp[il]) can be saved; a block range
+ *     that lands inside the raw-only frontier is rejected with an
+ *     informative error.
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ */
+int ds4_session_save_block(ds4_session *s, FILE *fp,
+                           int token_start, int token_end,
+                           char *err, size_t errlen);
+
+/* RFC 0007 §10.P5 raw-tail sidecar — save the session's SWA-window raw
+ * KV to a memory FILE* as a standalone sidecar payload. The block prefix
+ * is independent — this is meant to be uploaded under
+ * `wkv/v1/sidecar/raw_tail/b3=<chain_tip_hash>` by the caller (typically
+ * ds4_server) right after a successful wmbt_kv_put_kv_blocks() call.
+ *
+ * The on-disk envelope is the RTT1 layout documented at
+ * DS4_KVBLOCK_RAW_TAIL_MAGIC in ds4.c:
+ *   24 B header (magic, version, n_layers, n_raw_rows, head_dim,
+ *                bytes_per_elem)
+ *   n_layers × n_raw_rows × head_dim × bytes_per_elem bytes of raw KV
+ *   4 B end sentinel
+ *
+ * For DSV4 with n_raw_rows=DS4_N_SWA=128: 11,272,220 bytes total.
+ *
+ * Preconditions: the session has a valid checkpoint (saw at least one
+ * prefill since creation/invalidate). The SWA ring is read from the
+ * CPU/Metal layer caches in the current backend.
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ */
+/* `prompt_tokens_count` is the prompt length to record in the envelope's
+ * `original_total_tokens` field. Callers that save after generation has
+ * extended the live checkpoint past the prompt MUST pass the prompt
+ * length here; otherwise the install path on restore would extend the
+ * checkpoint past the next request's prompt and `ds4_session_sync` would
+ * fall through to a full re-prefill. Pass 0 to use `s->checkpoint.len`
+ * (the legacy behaviour, only correct when save runs at end of prefill). */
+/* `block_tokens` is the WombatKV/kvblock save granularity. The save
+ * needs it to compute how much compressor K/V the blocks already
+ * captured vs how much remains for the partial-tail extension in the
+ * sidecar (positions in [last_block_end, prompt_tokens_count)).
+ * Pass the same value used by `ds4_session_save_block`. */
+int ds4_session_save_raw_tail(ds4_session *s, FILE *fp,
+                              uint32_t prompt_tokens_count,
+                              uint32_t block_tokens,
+                              char *err, size_t errlen);
+
+/* RFC 0007 §10.P5 raw-tail sidecar — install raw KV bytes into the
+ * session's SWA ring from a sidecar payload (the inverse of
+ * ds4_session_save_raw_tail). Used by ds4_server after a block-prefix
+ * load_blocks() succeeded, when the matching sidecar GET also hit.
+ *
+ * After successful install, the session's CPU/Metal raw KV cache holds
+ * authoritative SWA-window state for the trailing `n_raw_rows` tokens;
+ * the downstream `ds4_session_sync()` short-circuits its suffix
+ * re-prefill.
+ *
+ * IMPORTANT: this MUST be called AFTER `ds4_session_load_blocks` has
+ * populated the engine for the matched-prefix length, because the GPU
+ * path uses ds4_session_tokens(s)->len to compute where in the SWA ring
+ * to write (phys = pos % raw_cap).
+ *
+ * Returns 0 on success; -1 on error with err populated (bad envelope,
+ * layout mismatch, capacity overflow). On error the session's SWA ring
+ * may be in a partially-installed state — callers should
+ * ds4_session_invalidate() and fall back to a cold prefill in that case.
+ */
+int ds4_session_install_raw_tail(ds4_session *s,
+                                 const uint8_t *bytes, size_t len,
+                                 char *err, size_t errlen);
+
+/* Install N consecutive blocks into the session, starting at token 0.
+ * After successful return, ds4_session_tokens(s)->len reflects the sum
+ * of token ranges covered by the blocks (must be contiguous, ascending,
+ * starting at 0; gaps not allowed). Subsequent ds4_session_sync()
+ * correctly prefills any suffix tokens beyond the loaded range.
+ *
+ * Preconditions:
+ *   - blocks[i].token_start = i == 0 ? 0 : blocks[i-1].token_end
+ *   - blocks[i].token_end - blocks[i].token_start ∈ {4..128 allowed set}
+ *   - All blocks share the same block_tokens granularity (no mixed mode)
+ *
+ * Returns 0 on success; -1 on error with err populated.
+ *
+ * Implementation status:
+ *   - CPU + Graph backend: IMPLEMENTED. Installs per-layer compressed K/V
+ *     (and indexer K/V for ratio-4 layers) into the live cache. Raw KV is
+ *     not preserved by the block format — the load leaves n_raw at zero
+ *     and relies on the next ds4_session_sync() to prefill suffix tokens
+ *     (which also re-emits the SWA ring).
+ *   - Token IDs are NOT carried in the block payload. After load_blocks
+ *     returns, ds4_session_tokens(s)->v[] is a placeholder filled with
+ *     zeros sized to the total token count. Callers (ds4_server /
+ *     WombatKV bindings) own the real token IDs out-of-band and are
+ *     responsible for either (a) overlaying the real token IDs onto the
+ *     placeholder vector before ds4_session_sync() if they want
+ *     common-prefix short-circuit behaviour, or (b) accepting that
+ *     ds4_session_sync() will treat the loaded prefix as a non-match and
+ *     refill from scratch.
+ *   - Partial-prefix install is not yet supported; the first block must
+ *     start at token 0 and blocks must be contiguous.
+ */
+int ds4_session_load_blocks(ds4_session *s,
+                            const ds4_block_handle *blocks, size_t block_count,
+                            char *err, size_t errlen);
+
+/* Report the per-layer byte stride per token. Used by WombatKV to plan
+ * block payload sizes and to validate block-payload byte lengths against
+ * the engine's layout.
+ *
+ *   *out_n_layers          = number of layers (e.g., 43 for DSV4)
+ *   *out_raw_bytes_per_tok = K+V bytes for one token in the raw KV ring,
+ *                            across all layers (e.g., 43 * 2048 = 88 KB)
+ *   *out_indexer_bytes_per_tok = same but for indexer KV (ratio-4 layers
+ *                                only contribute; e.g., 22 * 512 = 11 KB)
+ *
+ * The compressed-KV stride depends on per-layer ratio so this fn cannot
+ * give a single number for it; see ds4_session_layer_compression_ratio.
+ *
+ * Returns 0 on success; -1 on error.
+ */
+int ds4_session_block_layout(ds4_session *s,
+                             int *out_n_layers,
+                             size_t *out_raw_bytes_per_tok,
+                             size_t *out_indexer_bytes_per_tok,
+                             char *err, size_t errlen);
+
+/* Compression ratio for layer `layer_idx` (0 = no compression / raw only,
+ * 4 = ratio-4 attention with indexer KV, 128 = ratio-128 attention).
+ * Used by WombatKV when alignment checks need per-layer information.
+ *
+ * Returns the ratio or -1 on error.
+ */
+int ds4_session_layer_compression_ratio(ds4_session *s, int layer_idx);
+
+/* Validate a block_tokens value against the DS4 alignment rule
+ * (positive, <= 8192, multiple of 128). Exposed so WombatKV and tests
+ * can probe the rule without constructing a session.
+ *
+ * Returns 0 if valid; -1 otherwise.
+ */
+int ds4_kvblock_validate_block_tokens(int block_tokens);
 
 #endif
